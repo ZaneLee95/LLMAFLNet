@@ -783,7 +783,7 @@ void get_protocol_message_types(char *state_prompt, khash_t(strSet) * states_set
         char *state_answer = chat_with_llm(state_prompt, "instruct", MESSAGE_TYPE_RETRIES, 0.5);
         if (state_answer == NULL)
             continue;
-        // printf("## Answer from LLM:\n %s\n", state_answer);
+        // printf("##Answer from LLM:\n %s\n", state_answer);
 
         state_answer = format_string(state_answer);
 
@@ -973,211 +973,261 @@ char *enrich_sequence(char *sequence, khash_t(strSet) * missing_message_types)
     return response;
 }
 
-// // For debugging
-// // gcc -g -o chat-llm chat-llm.c chat-llm.h -lcurl -ljson-c -lpcre2-8
-// int main(int argc, char **argv)
-// {
-//     char *protocol_name = argv[1];
-//     char *in_dir = argv[2];
-//     khash_t(strSet) *states_set = kh_init(strSet);
+/* 构建针对特定漏洞的提示词 */
+char *construct_vulnerability_prompt(vulnerability_t *vulnerability, const char *protocol_grammar)
+{
+    char *prompt = NULL;
+    char *final_prompt = NULL;
+    
+    // 如果漏洞提供了特定的提示词模板，优先使用
+    if (vulnerability->prompt_template) {
+        // 结合协议语法和提示词模板构建最终提示词
+        asprintf(&prompt, 
+                "Given the %s protocol grammar:\n%s\n\n%s", 
+                vulnerability->protocol, 
+                protocol_grammar, 
+                vulnerability->prompt_template);
+    } else {
+        // 根据漏洞信息构建通用提示词
+        asprintf(&prompt, 
+                "Generate a valid %s protocol test case that targets a potential vulnerability.\n\n"
+                "Protocol: %s\n"
+                "Vulnerable message type: %s\n"
+                "Vulnerable field: %s\n"
+                "Trigger condition: %s\n"
+                "Description: %s\n\n"
+                "Protocol grammar reference:\n%s\n\n"
+                "Please generate a test case that follows the protocol grammar but contains inputs that might trigger this vulnerability. "
+                "Make sure the test case is syntactically valid but contains potentially problematic values for the specified field. "
+                "Return ONLY the raw protocol message(s) without any explanation.",
+                vulnerability->protocol,
+                vulnerability->protocol,
+                vulnerability->message_type,
+                vulnerability->field_name,
+                vulnerability->trigger_condition,
+                vulnerability->description,
+                protocol_grammar);
+    }
+    
+    // 构建最终的提示词格式
+    asprintf(&final_prompt, "[{\"role\": \"system\", \"content\": \"You are a helpful assistant specializing in network protocols and security testing.\"}, {\"role\": \"user\", \"content\": \"%s\"}]", prompt);
+    
+    free(prompt);
+    return final_prompt;
+}
 
-//     char *state_prompt = construct_prompt_for_protocol_states(protocol_name);
+/* 使用漏洞信息富集测试用例 */
+char *enrich_with_vulnerability(char* sequence, vulnerability_t *vulnerability)
+{
+    // 提取协议语法 (简化版，实际实现可能需要从已有的语法提取相关部分)
+    // 这里假设我们已经有了协议语法的字符串表示
+    char *protocol_grammar = strdup(""); // 实际需要填充真实的协议语法
+    
+    // 构建提示词
+    char *prompt = construct_vulnerability_prompt(vulnerability, protocol_grammar);
+    
+    // 调用LLM生成测试用例
+    char *generated_testcase = chat_with_llm(prompt, "gpt", VUL_ENRICHMENT_RETRIES, 0.7);
+    
+    free(prompt);
+    free(protocol_grammar);
+    
+    return generated_testcase;
+}
 
-//     // Get protocol states
-//     get_protocol_message_types(state_prompt, states_set);
+/* 初始化漏洞模板 */
+void init_vulnerability_templates(vulnerability_t *templates, int *template_count)
+{
+    *template_count = 0;
+    
+    // RTSP 协议中 Range 字段异常导致缓冲区溢出
+    templates[*template_count].vul_name = strdup("RTSP_Range_Overflow");
+    templates[*template_count].protocol = strdup("RTSP");
+    templates[*template_count].message_type = strdup("PLAY");
+    templates[*template_count].field_name = strdup("Range");
+    templates[*template_count].trigger_condition = strdup("超长值或特殊格式");
+    templates[*template_count].description = strdup("RTSP服务器处理PLAY请求时，如果Range字段格式异常可能导致缓冲区溢出");
+    templates[*template_count].prompt_template = strdup(
+        "For the RTSP protocol, generate a PLAY request with a malformed or oversized Range field that still follows the basic message structure.\n"
+        "Make sure the request looks realistic but may trigger a parser bug due to unusual Range value.\n"
+        "Common RTSP Range format is npt=start-end, but try to use extreme values, special characters, or malformed syntax that still appears valid.\n"
+        "Return ONLY the raw RTSP protocol message without any explanation."
+    );
+    (*template_count)++;
+    
+    // HTTP 协议中 Content-Length 与实际内容不匹配
+    templates[*template_count].vul_name = strdup("HTTP_Content_Length_Mismatch");
+    templates[*template_count].protocol = strdup("HTTP");
+    templates[*template_count].message_type = strdup("POST");
+    templates[*template_count].field_name = strdup("Content-Length");
+    templates[*template_count].trigger_condition = strdup("与实际内容大小不符");
+    templates[*template_count].description = strdup("HTTP服务器在处理POST请求时，如果Content-Length声明与实际内容大小不符可能导致缓冲区溢出或拒绝服务");
+    templates[*template_count].prompt_template = strdup(
+        "Generate an HTTP POST request where the Content-Length header value doesn't match the actual size of the message body.\n"
+        "This can be either much larger or smaller than the actual body size.\n"
+        "Include some typical HTTP headers and make the request look realistic.\n"
+        "Return ONLY the raw HTTP protocol message without any explanation."
+    );
+    (*template_count)++;
+    
+    // FTP协议中的路径遍历漏洞
+    templates[*template_count].vul_name = strdup("FTP_Path_Traversal");
+    templates[*template_count].protocol = strdup("FTP");
+    templates[*template_count].message_type = strdup("CWD");
+    templates[*template_count].field_name = strdup("path");
+    templates[*template_count].trigger_condition = strdup("包含../等目录遍历字符");
+    templates[*template_count].description = strdup("FTP服务器在处理CWD（改变工作目录）命令时，如果路径包含../等字符可能导致目录遍历漏洞");
+    templates[*template_count].prompt_template = strdup(
+        "Generate an FTP command sequence that attempts to exploit a path traversal vulnerability.\n"
+        "Include commands like CWD with path parameters containing sequences like '../' to try accessing files outside the intended directory.\n"
+        "Make the sequence look realistic while focusing on directory traversal patterns.\n"
+        "Return ONLY the raw FTP protocol commands without any explanation."
+    );
+    (*template_count)++;
+    
+    // SMTP命令注入漏洞
+    templates[*template_count].vul_name = strdup("SMTP_Command_Injection");
+    templates[*template_count].protocol = strdup("SMTP");
+    templates[*template_count].message_type = strdup("MAIL FROM");
+    templates[*template_count].field_name = strdup("sender");
+    templates[*template_count].trigger_condition = strdup("包含换行符或额外命令");
+    templates[*template_count].description = strdup("SMTP服务器处理MAIL FROM命令时，如果sender字段包含换行符可能导致命令注入");
+    templates[*template_count].prompt_template = strdup(
+        "Generate an SMTP session that attempts to exploit a command injection vulnerability.\n"
+        "Include a MAIL FROM command where the sender email address contains a newline character followed by an additional SMTP command.\n"
+        "Make the sequence look like a valid SMTP conversation but with the injection payload.\n"
+        "Return ONLY the raw SMTP protocol commands without any explanation."
+    );
+    (*template_count)++;
+}
 
-//     // traverse the states_set
-//     khiter_t k;
-//     for (k = kh_begin(states_set); k != kh_end(states_set); ++k)
-//     {
-//         if (kh_exist(states_set, k))
-//         {
-//             const char *protocol_state = kh_key(states_set, k);
-//             printf("## State_traverse: %s\n", protocol_state);
-//         }
-//     }
+/* 释放漏洞模板资源 */
+void free_vulnerability_templates(vulnerability_t *templates, int template_count)
+{
+    for (int i = 0; i < template_count; i++) {
+        free(templates[i].vul_name);
+        free(templates[i].protocol);
+        free(templates[i].message_type);
+        free(templates[i].field_name);
+        free(templates[i].trigger_condition);
+        free(templates[i].description);
+        free(templates[i].prompt_template);
+    }
+}
 
-//     // Get seeds to states and save them to the in_dir
-//     get_seeds_to_states(in_dir, states_set, protocol_name);
+/* 验证生成的测试用例的语法正确性 */
+int validate_generated_testcase(char *testcase, const char *protocol)
+{
+    // 这里应该实现根据协议类型进行不同的验证逻辑
+    // 简单实现：检查是否为空，以及包含一些基本的协议关键字
+    
+    if (!testcase || strlen(testcase) < 5) {
+        return 0; // 太短，无效
+    }
+    
+    // 根据协议类型进行简单验证
+    if (strcmp(protocol, "RTSP") == 0) {
+        return (strstr(testcase, "RTSP/1.0") != NULL);
+    } else if (strcmp(protocol, "HTTP") == 0) {
+        return (strstr(testcase, "HTTP/1.") != NULL);
+    } else if (strcmp(protocol, "FTP") == 0) {
+        return (strstr(testcase, "CWD") != NULL || strstr(testcase, "USER") != NULL);
+    } else if (strcmp(protocol, "SMTP") == 0) {
+        return (strstr(testcase, "MAIL FROM") != NULL || strstr(testcase, "HELO") != NULL);
+    }
+    
+    return 1; // 默认认为有效（保守策略）
+}
 
-//     // char *prompt = NULL;
-//     // asprintf(&prompt, "user: The colors of flowers:\\nassistant: red and yellow.\\nuser: Other colors are:");
-//     // printf("## Prompt to LLM:\n %s\n", prompt);
-//     // char *answer = chat_with_llm(prompt, "instruct");
-//     // printf("## Answer from LLM:\n %s\n", answer);
-
-//     char *protocol_name = argv[1];
-//     khash_t(consistency_table) *const_table = kh_init(consistency_table);
-//     klist_t(rang) *protocol_patterns = kl_init(rang);
-
-//     for (int iter = 0; iter < 5; iter++)
-//     {
-
-//         char *templates_prompt = construct_prompt_for_templates(protocol_name);
-//         char *templates_answer = chat_with_llm(templates_prompt, "turbo");
-//         // printf("## Answer from LLM:\n %s\n", templates_answer);
-//         char *remaining_prompt = construct_prompt_for_remaining_templates(protocol_name, templates_prompt, templates_answer);
-//         // printf("remaining prompt is:\n %s\n", remaining_prompt);
-//         char *remaining_templates = chat_with_llm(remaining_prompt, "turbo");
-//         // printf("## Remaining templates:\n %s\n", remaining_templates);
-
-//         char *combined_templates = NULL;
-//         asprintf(&combined_templates, "%s\n%s", templates_answer, remaining_templates);
-
-//         printf("The final info is\n%s\n", combined_templates);
-//         klist_t(gram) *grammar_list = kl_init(gram);
-//         extract_message_grammars(combined_templates, grammar_list);
-
-//         kliter_t(gram) * iter;
-//         for (iter = kl_begin(grammar_list); iter != kl_end(grammar_list); iter = kl_next(iter))
-//         {
-//             json_object *jobj = kl_val(iter);
-
-//             json_object *header = json_object_array_get_idx(jobj, 0);
-
-//             int absent;
-
-//             const char *header_str = json_object_get_string(header);
-
-//             khiter_t k = kh_put(consistency_table, const_table, header_str, &absent);
-//             if (absent)
-//             {
-//                 khash_t(field_table) *field_table = kh_init(field_table);
-//                 kh_value(const_table, k) = field_table;
-//             }
-
-//             for (int i = 1; i < json_object_array_length(jobj); i++)
-//             {
-//                 const char *v = json_object_get_string(json_object_array_get_idx(jobj, i));
-//                 khash_t(field_table) *field_table = kh_value(const_table, k);
-//                 khiter_t field_k = kh_put(field_table, field_table, v, &absent);
-//                 if (absent)
-//                 {
-//                     kh_value(field_table, field_k) = 0;
-//                 }
-//                 kh_value(field_table, field_k)++;
-//             }
-//         }
-//         kl_destroy_gram(grammar_list);
-//     }
-
-//     for (khiter_t con_t_iter = kh_begin(const_table); con_t_iter != kh_end(const_table); ++con_t_iter)
-//     {
-//         if (kh_exist(const_table, con_t_iter))
-//         {
-//             pcre2_code **patterns = ck_alloc(2 * sizeof(pcre2_code *));
-
-//             khash_t(field_table) *field_table = kh_value(const_table, con_t_iter);
-//             const char* header_str = json_object_to_json_string(json_object_new_string(kh_key(const_table, con_t_iter)));
-
-//             extract_message_pattern_k(header_str,field_table, patterns);
-//             *kl_pushp(rang, protocol_patterns) = patterns;
-//         }
-//     }
-
-//     char *demo_lines[] = {
-
-//         "DESCRIBE 123\r\n"
-//         "CSeq: 1212313\r\n"
-//         "User-Agent: 1212313\r\n"
-//         "Accept: 1212313\r\n"
-//         "\r\n",
-
-//         "DESCRIBE 123\r\n"
-//         "DESCRIBE 123\r\n"
-//         "User-Agent: 1212313\r\n"
-//         "CSeq: 1212313\r\n"
-//         "Accept: 1212313\r\n"
-//         "\r\n",
-
-//         "DESCRIBE 123\r\n"
-//         "1231321321321"
-//         "User-Agent: 1212313\r\n"
-//         "CSeq: 1212313\r\n"
-//         "Accept: 1212313\r\n"
-//         "\r\n"
-//         "1231321321321",
-
-//         "DESCRIBE 123\r\n"
-//         "1231321321321"
-//         "User-Agent: 1212313\r\n"
-//         "CSeq: 1212313\r1231321321321\n"
-//         "Accept: 1212313\r\n"
-//         "\r\n"
-//         "1231321321321",
-
-//         "PLAY 123\r\n"
-//         "CSeq: 1212313\r\n"
-//         "DESCRIBE 123\r\n"
-//         "User-Agent: 1212313\r\n"
-//         "Session: 1212313\r\n"
-//         "Range: 1212313\r\n"
-//         "\r\n",
-
-//     };
-
-// char* answers = "For the RTSP protocol, the DESCRIBE client request template is:"
-//     "{\"DESCRIBE\":\"string\\r\\n\",\"CSeq:\":\"integer\\r\\n\",\"User-Agent:\":\"string\\r\\n\",\"Accept:\":\"string\\r\\n\\r\\n\"}."
-//     "For the RTSP protocol, the DESCRIBE client request template is:{\"DESCRIBE\":\"string\\r\\n\",\"CSeq:\":\"integer\\r\\n\",\"User-Agent:\":\"string\\r\\n\",\"Accept:\":\"string\\r\\n\\r\\n\"}";
-
-// for (int demo = 0; demo < sizeof(demo_lines) / sizeof(char *); demo++)
-// {
-//     printf("\nTrying to match \n%s\n\n", demo_lines[demo]);
-//     int max_rc = -1;
-//     kliter_t(rang) * iter_rang;
-//     range_list max_ranges;
-//     int i = 0;
-//     for (iter_rang = kl_begin(protocol_patterns); iter_rang != kl_end(protocol_patterns); iter_rang = kl_next(iter_rang),i++)
-//     {
-//         // printf("Compare! \n");
-
-//         pcre2_code **patterns = kl_val(iter_rang);
-//         pcre2_code *header_pattern = patterns[0];
-//         pcre2_code *fields_pattern = patterns[1];
-
-//         range_list header_ranges = starts_with(demo_lines[demo], strlen(demo_lines[demo]), header_pattern);
-//         kv_init(header_ranges);
-
-//         if (kv_size(header_ranges) == 0)
-//         {
-//             printf("Demo %d Did not match pattern %d\n", demo, i);
-//             continue;
-//         }
-//         else
-//         {
-//             printf("Demo %d Did matched pattern %d\n", demo, i);
-//             range header_match = kv_pop(header_ranges);
-//             char *offsetted_line = demo_lines[demo];
-//             size_t offsetted_len = strlen(demo_lines[demo]);
-//             range_list field_ranges = get_mutable_ranges(offsetted_line,offsetted_len, header_match.len,fields_pattern);
-
-//             for(int i = 0; i < kv_size(field_ranges);i++){
-//                 kv_push(range, header_ranges, kv_A(field_ranges,i));
-//             }
-//             kv_destroy(field_ranges);
-
-//             max_ranges = header_ranges;
-
-//             break;
-//         }
-//     }
-
-//     if (max_rc != -1)
-//     {
-//         printf("Matched! \n");
-//         for (int i = 0; i < max_rc; i++)
-//         {
-//             printf("start=%d len=%d mutable=%d\n", kv_A(max_ranges,i).start,kv_A(max_ranges,i).len, kv_A(max_ranges,i).mutable);
-//             printf("content=%s\n", json_object_to_json_string(json_object_new_string_len(demo_lines[demo] + kv_A(max_ranges,i).start, kv_A(max_ranges,i).len)));
-//         }
-//     }
-//     else
-//     {
-//         printf("No matches\n");
-//     }
-// }
-
-// Traverse the list
-
-//     return 0;
-// }
+/* 获取由历史漏洞驱动的测试用例种子 */
+void get_vulnerability_driven_seeds(const char *in_dir, vulnerability_t *templates, int template_count)
+{
+    struct dirent **nl_files;
+    int nl_cnt = scandir(in_dir, &nl_files, NULL, alphasort);
+    
+    if (nl_cnt < 0) {
+        printf("Error reading directory %s\n", in_dir);
+        return;
+    }
+    
+    ACTF("Generating vulnerability-driven test cases...");
+    
+    // 遍历每个漏洞模板
+    for (int t = 0; t < template_count; t++) {
+        vulnerability_t *current_vul = &templates[t];
+        
+        // 为每个漏洞模板生成至少一个测试用例
+        char *generated_testcase = enrich_with_vulnerability(NULL, current_vul);
+        
+        if (generated_testcase && validate_generated_testcase(generated_testcase, current_vul->protocol)) {
+            // 创建新的种子文件
+            char *vul_seed_name = alloc_printf("vul_%s.raw", current_vul->vul_name);
+            char *vul_seed_path = alloc_printf("%s/%s", in_dir, vul_seed_name);
+            
+            ACTF("Creating vulnerability-driven seed: %s", vul_seed_name);
+            write_new_seeds(vul_seed_path, generated_testcase);
+            
+            ck_free(vul_seed_name);
+            ck_free(vul_seed_path);
+        }
+        
+        free(generated_testcase);
+        
+        // 对现有种子进行富集
+        for (int i = 0; i < MIN(nl_cnt, 5); i++) { // 限制处理前5个种子
+            char *nl_file_name = nl_files[i]->d_name;
+            
+            // 跳过特殊文件和已富集文件
+            if (strcmp(nl_file_name, ".") == 0 || strcmp(nl_file_name, "..") == 0 || 
+                strstr(nl_file_name, "enriched") != NULL || strstr(nl_file_name, "vul_") != NULL) {
+                continue;
+            }
+            
+            char *nl_file_path = alloc_printf("%s/%s", in_dir, nl_file_name);
+            
+            // 读取种子文件内容
+            FILE *nl_file = fopen(nl_file_path, "r");
+            if (!nl_file) {
+                ck_free(nl_file_path);
+                continue;
+            }
+            
+            fseek(nl_file, 0, SEEK_END);
+            size_t fsize = ftell(nl_file);
+            fseek(nl_file, 0, SEEK_SET);
+            
+            char *nl_file_content = ck_alloc(fsize + 1);
+            fread(nl_file_content, fsize, 1, nl_file);
+            nl_file_content[fsize] = '\0';
+            fclose(nl_file);
+            
+            // 使用当前漏洞模板富集种子
+            char *enriched_testcase = enrich_with_vulnerability(nl_file_content, current_vul);
+            
+            if (enriched_testcase && 
+                validate_generated_testcase(enriched_testcase, current_vul->protocol) && 
+                strcmp(format_string(enriched_testcase), format_string(nl_file_content)) != 0) {
+                
+                // 创建富集后的种子文件
+                char *enriched_name = alloc_printf("vul_%s_%s", current_vul->vul_name, nl_file_name);
+                char *enriched_path = alloc_printf("%s/%s", in_dir, enriched_name);
+                
+                ACTF("Creating vulnerability-enriched seed: %s", enriched_name);
+                write_new_seeds(enriched_path, enriched_testcase);
+                
+                ck_free(enriched_name);
+                ck_free(enriched_path);
+            }
+            
+            free(enriched_testcase);
+            ck_free(nl_file_content);
+            ck_free(nl_file_path);
+        }
+    }
+    
+    // 释放资源
+    for (int i = 0; i < nl_cnt; i++) {
+        free(nl_files[i]);
+    }
+    free(nl_files);
+}

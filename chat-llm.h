@@ -39,6 +39,23 @@ Similarly 1700 is for the example request in the seed enrichment
 // Maximum number of messages to examine for addition
 #define MAX_ENRICHMENT_CORPUS_SIZE 10
 
+// 漏洞驱动用例生成的重试次数
+#define VUL_ENRICHMENT_RETRIES 3
+
+// 每个协议最大漏洞模板数量
+#define MAX_VUL_TEMPLATES 10
+
+// 历史漏洞描述结构体
+typedef struct {
+    char *vul_name;           // 漏洞名称
+    char *protocol;           // 适用协议
+    char *message_type;       // 消息类型
+    char *field_name;         // 相关字段
+    char *trigger_condition;  // 触发条件
+    char *description;        // 描述
+    char *prompt_template;    // 提示词模板
+} vulnerability_t;
+
 #define PCRE2_CODE_UNIT_WIDTH 8 // Characters are 8 bits
 #include <pcre2.h>
 
@@ -70,6 +87,7 @@ char *construct_prompt_for_remaining_templates(char *protocol_name, char *templa
 char *construct_prompt_for_protocol_message_types(char *protocol_name);
 char *construct_prompt_for_requests_to_states(const char *protocol_name, const char *protocol_state, const char *example_requests);
 char *construct_prompt_stall(char *protocol_name, char *examples, char *history);
+char *construct_vulnerability_prompt(vulnerability_t *vulnerability, const char *protocol_grammar);
 
 void extract_message_grammars(char *answers, klist_t(gram) * grammar_set);
 char *extract_message_pattern(const char *header_str,
@@ -86,9 +104,17 @@ range_list get_mutable_ranges(char *line, int length, int offset, pcre2_code *pa
 void get_protocol_message_types(char *state_prompt, khash_t(strSet) * message_types);
 
 char *enrich_sequence(char* sequence, khash_t(strSet) *missing_message_types);
+char *enrich_with_vulnerability(char* sequence, vulnerability_t *vulnerability);
 khash_t(strSet)* duplicate_hash(khash_t(strSet)* set);
 void write_new_seeds(char *enriched_file, char *contents);
 char *unescape_string(const char *input);
 char *format_string(char *state_string);
 message_set_list message_combinations(khash_t(strSet)* sequence, int size);
+
+// 漏洞驱动用例富集相关函数
+void init_vulnerability_templates(vulnerability_t *templates, int *template_count);
+void free_vulnerability_templates(vulnerability_t *templates, int template_count);
+int validate_generated_testcase(char *testcase, const char *protocol);
+void get_vulnerability_driven_seeds(const char *in_dir, vulnerability_t *templates, int template_count);
+
 #endif // __CHAT_LLM_H

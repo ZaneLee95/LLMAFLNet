@@ -448,7 +448,7 @@ void setup_llm_grammars()
     if (templates_answer == NULL)
       goto free_templates_answer;
 
-    // printf("## Answer from LLM:\n %s\n", templates_answer);
+    // printf("##Answer from LLM:\n %s\n", templates_answer);
     char *remaining_prompt = construct_prompt_for_remaining_templates(protocol_name, first_question, templates_answer);
     // printf("remaining prompt is:\n %s\n", remaining_prompt);
     char *remaining_templates = chat_with_llm(remaining_prompt, "turbo", GRAMMAR_RETRIES, 0.5);
@@ -2311,7 +2311,6 @@ static void simplify_trace(u32 *mem)
 
     mem++;
   }
-}
 
 #endif /* ^WORD_SIZE_64 */
 
@@ -2772,15 +2771,33 @@ static void enrich_testcases(void)
 {
   ACTF("Enriching test cases from LLM...");
 
+  // 1. 原有的基于消息类型的富集功能
   // char *message_prompt = construct_prompt_for_protocol_message_types(protocol_name);
-
   // // Get protocol states
   // get_protocol_message_types(message_prompt, message_type_set);
-
   // free(message_prompt);
-
   // Get seeds to states and save them to the in_dir
   get_seeds_with_messsage_types(in_dir, message_types_set);
+
+  // 2. 新增：基于历史漏洞的测试用例富集
+  ACTF("Enriching test cases with vulnerability templates...");
+  
+  // 初始化漏洞模板
+  vulnerability_t templates[MAX_VUL_TEMPLATES];
+  int template_count = 0;
+  
+  // 加载预定义的漏洞模板
+  init_vulnerability_templates(templates, &template_count);
+  
+  if (template_count > 0) {
+    // 基于漏洞模板生成测试用例
+    get_vulnerability_driven_seeds(in_dir, templates, template_count);
+    
+    // 释放漏洞模板资源
+    free_vulnerability_templates(templates, template_count);
+  } else {
+    WARNF("No vulnerability templates available for enrichment");
+  }
 }
 
 /* Read all testcases from the input directory, then queue them for testing.
@@ -9071,10 +9088,6 @@ static void sync_fuzzers(char **argv)
         syncing_party = sd_ent->d_name;
         queued_imported += save_if_interesting(argv, mem, st.st_size, fault);
         syncing_party = 0;
-
-        /* AFLNet delete the kl_messages */
-        ck_free(regions);
-        delete_kl_messages(kl_messages);
 
         /* AFLNet: unset this flag to disable request extractions while adding new seed to the queue */
         corpus_read_or_sync = 0;

@@ -1008,6 +1008,17 @@ char *enrich_sequence_generic(char *sequence, khash_t(strSet) * missing_message_
     return response;
 }
 
+// New function that takes a specific pattern
+char *enrich_sequence_with_vuln_pattern(char *sequence, const char* message_type, vuln_pattern_t* pattern) {
+    char* prompt = construct_prompt_for_vuln_enrichment(sequence, message_type, pattern);
+    
+    // It's a targeted request, so we might want higher temperature for creativity
+    char* response = chat_with_llm(prompt, "turbo", ENRICHMENT_RETRIES, 0.7);
+
+    free(prompt);
+    return response;
+}
+
 // // For debugging
 // // gcc -g -o chat-llm chat-llm.c chat-llm.h -lcurl -ljson-c -lpcre2-8
 // int main(int argc, char **argv)

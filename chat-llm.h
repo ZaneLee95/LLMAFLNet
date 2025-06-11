@@ -108,7 +108,9 @@ range_list starts_with(char *line, int length, pcre2_code *pattern);
 range_list get_mutable_ranges(char *line, int length, int offset, pcre2_code *pattern);
 void get_protocol_message_types(char *state_prompt, khash_t(strSet) * message_types);
 
-char *enrich_sequencee_generic(char* sequence, khash_t(strSet) *missing_message_types);
+char *enrich_sequence_generic(char* sequence, khash_t(strSet) *missing_message_types);
+char *enrich_sequence_with_vuln_pattern(char* sequence, const char* message_type, vuln_pattern_t* pattern);
+
 khash_t(strSet)* duplicate_hash(khash_t(strSet)* set);
 void write_new_seeds(char *enriched_file, char *contents);
 char *unescape_string(const char *input);

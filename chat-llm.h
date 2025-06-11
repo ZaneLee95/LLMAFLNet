@@ -56,13 +56,36 @@ typedef struct
     int mutable;
 } range;
 
+// New struct to hold a vulnerability pattern
+typedef struct {
+    char* description;
+    char* target_messages; // Comma-separated list of message types
+    char* pattern;         // The actual vulnerability pattern string
+} vuln_pattern_t;
+
 typedef kvec_t(range) range_list;
 typedef kvec_t(khash_t(strSet)*) message_set_list;
+
+// Define a klist of vulnerability patterns
+#define __vuln_pattern_t_free(p) do { \
+    if (p) { \
+        free((p)->description); \
+        free((p)->target_messages); \
+        free((p)->pattern); \
+    } \
+} while(0)
+KLIST_INIT(vuln_patterns, vuln_pattern_t*, __vuln_pattern_t_free);
 
 // define one map to save pairs: {key: string, value: int}
 KHASH_MAP_INIT_STR(strMap, int)
 KHASH_MAP_INIT_STR(field_table, int);
 KHASH_INIT(consistency_table, const char *, khash_t(field_table) *, 1, kh_str_hash_func, kh_str_hash_equal);
+
+// Define a hash map from protocol name (string) to a list of vuln_patterns
+KHASH_MAP_INIT_STR(vuln_map, klist_t(vuln_patterns)*);
+
+// New function prototype for constructing vulnerability-aware prompts
+char* construct_prompt_for_vuln_enrichment(const char* sequence, const char* message_type_to_add, vuln_pattern_t* pattern);
 
 char *chat_with_llm(char *prompt, char *model, int tries, float temperature);
 char *construct_prompt_for_templates(char *protocol_name, char **final_msg);
@@ -85,7 +108,7 @@ range_list starts_with(char *line, int length, pcre2_code *pattern);
 range_list get_mutable_ranges(char *line, int length, int offset, pcre2_code *pattern);
 void get_protocol_message_types(char *state_prompt, khash_t(strSet) * message_types);
 
-char *enrich_sequence(char* sequence, khash_t(strSet) *missing_message_types);
+char *enrich_sequencee_generic(char* sequence, khash_t(strSet) *missing_message_types);
 khash_t(strSet)* duplicate_hash(khash_t(strSet)* set);
 void write_new_seeds(char *enriched_file, char *contents);
 char *unescape_string(const char *input);

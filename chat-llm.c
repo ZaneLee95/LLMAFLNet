@@ -148,6 +148,41 @@ char *chat_with_llm(char *prompt, char *model, int tries, float temperature)
     return answer;
 }
 
+char* construct_prompt_for_vuln_enrichment(const char* sequence, 
+                                           const char* message_type_to_add, 
+                                           vuln_pattern_t* pattern) 
+{
+    const char* prompt_template = 
+        "You are a security testing assistant. Your task is to enrich a sequence of protocol messages. "
+        "The original sequence is:\\n\"\"\"\\n%s\\n\"\"\"\\n"
+        "Please insert a '%s' message into this sequence. "
+        "Crucially, the new message must incorporate the following specific vulnerability pattern:\\n"
+        "Pattern Description: %s\\n"
+        "Pattern to inject:\\n\"\"\"\\n%s\\n\"\"\"\\n"
+        "Provide only the complete, modified sequence of client requests. Do not add any explanations.";
+
+    char* prompt = NULL;
+
+    // Escape the sequence for JSON embedding
+    json_object* seq_json = json_object_new_string(sequence);
+    const char* seq_escaped = json_object_to_json_string(seq_json);
+
+    asprintf(&prompt, prompt_template,
+             seq_escaped,
+             message_type_to_add,
+             pattern->description ? pattern->description : "N/A",
+             pattern->pattern);
+    
+    json_object_put(seq_json);
+
+    // The final prompt needs to be wrapped for the chat model format
+    char *final_prompt = NULL;
+    asprintf(&final_prompt, "[{\"role\": \"system\", \"content\": \"You are a helpful protocol security expert.\"}, {\"role\": \"user\", \"content\": \"%s\"}]", prompt);
+    
+    free(prompt);
+    return final_prompt;
+}
+
 char *construct_prompt_stall(char *protocol_name, char *examples, char *history)
 {
     char *template = "In the %s protocol, the communication history between the %s client and the %s server is as follows."
@@ -914,7 +949,7 @@ int min(int a, int b) {
     return a < b ? a : b;
 }
 
-char *enrich_sequence(char *sequence, khash_t(strSet) * missing_message_types)
+char *enrich_sequence_generic(char *sequence, khash_t(strSet) * missing_message_types)
 {
     const char *prompt_template =
         "The following is one sequence of client requests:\\n"

@@ -1,0 +1,4 @@
+# Description: Format string vulnerability in the User-Agent header.
+# Target Messages: INVITE,REGISTER,OPTIONS
+# Pattern:
+User-Agent: %s%s%s%s%n%n%n%n

@@ -1050,3 +1050,131 @@ char *enrich_sequence_with_vuln_pattern(char *sequence, const char* message_type
     
     return NULL;
 }
+
+// 实现漏洞模板相关函数
+
+void init_vulnerability_templates(vulnerability_t* templates, int* template_count) {
+    // 这个函数可以保留为空，因为我们已经从文件加载了漏洞模式
+    // 或者可以添加一些默认模板，以防文件加载失败
+    *template_count = 0;
+}
+
+void get_vulnerability_driven_seeds(const char* in_dir, vulnerability_t* templates, int template_count) {
+    if (!in_dir) return;
+    
+    // 获取输入目录中的所有种子文件
+    DIR* d = opendir(in_dir);
+    if (!d) {
+        WARNF("Could not open input directory: %s", in_dir);
+        return;
+    }
+    
+    ACTF("Enriching seeds with vulnerability patterns from /vuln_patterns...");
+    
+    struct dirent* de;
+    while ((de = readdir(d))) {
+        // 跳过隐藏文件和非常规文件
+        if (de->d_name[0] == '.') continue;
+        
+        char file_path[PATH_MAX];
+        snprintf(file_path, sizeof(file_path), "%s/%s", in_dir, de->d_name);
+        
+        // 读取种子文件内容
+        FILE* f = fopen(file_path, "r");
+        if (!f) {
+            WARNF("Could not open seed file: %s", file_path);
+            continue;
+        }
+        
+        // 获取文件大小
+        fseek(f, 0, SEEK_END);
+        long file_size = ftell(f);
+        fseek(f, 0, SEEK_SET);
+        
+        if (file_size <= 0 || file_size > MAX_FILE) {
+            WARNF("Invalid file size for seed: %s", file_path);
+            fclose(f);
+            continue;
+        }
+        
+        // 读取文件内容
+        char* file_content = (char*)malloc(file_size + 1);
+        if (!file_content) {
+            WARNF("Failed to allocate memory for seed content: %s", file_path);
+            fclose(f);
+            continue;
+        }
+        
+        size_t bytes_read = fread(file_content, 1, file_size, f);
+        fclose(f);
+        
+        if (bytes_read != (size_t)file_size) {
+            WARNF("Failed to read seed content: %s", file_path);
+            free(file_content);
+            continue;
+        }
+        
+        file_content[file_size] = '\0';
+        
+        // 使用已加载的漏洞模式
+        if (protocol_name && vuln_patterns_map) {
+            khiter_t k_map = kh_get(vuln_map, vuln_patterns_map, protocol_name);
+            if (k_map != kh_end(vuln_patterns_map)) {
+                klist_t(vuln_patterns)* patterns = kh_value(vuln_patterns_map, k_map);
+                kliter_t(vuln_patterns)* it;
+                
+                for (it = kl_begin(patterns); it != kl_end(patterns); it = kl_next(it)) {
+                    vuln_pattern_t* p = kl_val(it);
+                    
+                    // 解析目标消息类型
+                    char* targets_copy = ck_strdup(p->target_messages);
+                    char* token = strtok(targets_copy, ",");
+                    
+                    while (token) {
+                        // 使用漏洞模式富集序列
+                        char* enriched_content = enrich_sequence_with_vuln_pattern(file_content, token, p);
+                        
+                        if (enriched_content) {
+                            // 创建新的种子文件
+                            char* enriched_file_name;
+                            asprintf(&enriched_file_name, "enriched_vuln_%s_%s", token, de->d_name);
+                            
+                            char* enriched_file_path = alloc_printf("%s/%s", in_dir, enriched_file_name);
+                            
+                            // 写入新种子
+                            FILE* out_f = fopen(enriched_file_path, "w");
+                            if (out_f) {
+                                fwrite(enriched_content, 1, strlen(enriched_content), out_f);
+                                fclose(out_f);
+                                ACTF("Created vulnerability-driven seed: %s", enriched_file_name);
+                            } else {
+                                WARNF("Failed to write enriched seed: %s", enriched_file_path);
+                            }
+                            
+                            free(enriched_file_name);
+                            ck_free(enriched_file_path);
+                            free(enriched_content);
+                        }
+                        
+                        token = strtok(NULL, ",");
+                    }
+                    
+                    ck_free(targets_copy);
+                }
+            } else {
+                WARNF("No vulnerability patterns found for protocol: %s", protocol_name);
+            }
+        } else {
+            WARNF("Protocol name not set or vulnerability patterns map not initialized");
+        }
+        
+        free(file_content);
+    }
+    
+    closedir(d);
+}
+
+void free_vulnerability_templates(vulnerability_t* templates, int template_count) {
+    // 这个函数可以保留为空，因为我们没有创建任何模板
+    // 或者可以添加一些清理代码，以防我们在 init_vulnerability_templates 中添加了默认模板
+}

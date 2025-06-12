@@ -1,0 +1,6 @@
+# Description: Integer overflow or smuggling via a negative Content-Length.
+# Target Messages: POST,PUT
+# Pattern:
+POST /upload HTTP/1.1
+Host: 127.0.0.1
+Content-Length: -1

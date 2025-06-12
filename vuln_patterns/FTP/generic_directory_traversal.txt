@@ -1,0 +1,4 @@
+# Description: Directory traversal using '..' sequences to access files outside the FTP root.
+# Target Messages: RETR,STOR,CWD,LIST
+# Pattern:
+CWD ../../../../../../../../../etc/

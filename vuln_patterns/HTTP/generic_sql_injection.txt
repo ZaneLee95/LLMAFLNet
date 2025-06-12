@@ -1,0 +1,5 @@
+# Description: Classic SQL injection in a URL parameter.
+# Target Messages: GET,POST
+# Pattern:
+GET /users?id=1'%20OR%20'1'='1 HTTP/1.1
+Host: 127.0.0.1

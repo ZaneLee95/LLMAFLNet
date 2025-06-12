@@ -1,0 +1,4 @@
+# Description: FTP bounce attack using the PORT command to scan internal networks or attack other hosts.
+# Target Messages: PORT
+# Pattern:
+PORT 127,0,0,1,0,22

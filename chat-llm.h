@@ -43,17 +43,14 @@ Similarly 1700 is for the example request in the seed enrichment
 #define VUL_ENRICHMENT_RETRIES 3
 
 // 每个协议最大漏洞模板数量
-#define MAX_VUL_TEMPLATES 10
+#define MAX_VUL_TEMPLATES 50
 
 // 历史漏洞描述结构体
-typedef struct {
-    char *vul_name;           // 漏洞名称
-    char *protocol;           // 适用协议
-    char *message_type;       // 消息类型
-    char *field_name;         // 相关字段
-    char *trigger_condition;  // 触发条件
-    char *description;        // 描述
-    char *prompt_template;    // 提示词模板
+typedef struct vulnerability_template {
+    char* name;
+    char* description;
+    char* pattern;
+    char* applicable_message_types;
 } vulnerability_t;
 
 #define PCRE2_CODE_UNIT_WIDTH 8 // Characters are 8 bits
@@ -73,17 +70,18 @@ typedef struct
     int mutable;
 } range;
 
-// New struct to hold a vulnerability pattern
+// 使用单一结构体表示漏洞模式
 typedef struct {
-    char* description;
-    char* target_messages; // Comma-separated list of message types
-    char* pattern;         // The actual vulnerability pattern string
+    char* name;             // 漏洞名称
+    char* description;      // 描述
+    char* target_messages;  // 目标消息类型
+    char* pattern;          // 漏洞模式
 } vuln_pattern_t;
 
 typedef kvec_t(range) range_list;
 typedef kvec_t(khash_t(strSet)*) message_set_list;
 
-// Define a klist of vulnerability patterns
+// 定义漏洞模式的 klist 结构体
 #define __vuln_pattern_t_free(x) do { \
     if ((x)->data) { \
         free(((x)->data)->description); \
@@ -94,15 +92,15 @@ typedef kvec_t(khash_t(strSet)*) message_set_list;
 } while(0)
 KLIST_INIT(vuln_patterns, vuln_pattern_t*, __vuln_pattern_t_free);
 
-// define one map to save pairs: {key: string, value: int}
+// 定义一个 map 结构体，保存 {key: string, value: int} 的键值对
 KHASH_MAP_INIT_STR(strMap, int)
 KHASH_MAP_INIT_STR(field_table, int);
 KHASH_INIT(consistency_table, const char *, khash_t(field_table) *, 1, kh_str_hash_func, kh_str_hash_equal);
 
-// Define a hash map from protocol name (string) to a list of vuln_patterns
+// 定义一个 map 结构体，保存 {key: 协议名称（字符串），value: 列表漏洞模式} 的键值对
 KHASH_MAP_INIT_STR(vuln_map, klist_t(vuln_patterns)*);
 
-// New function prototype for constructing vulnerability-aware prompts
+// 用于构建漏洞感知提示的新函数原型
 char* construct_prompt_for_vuln_enrichment(const char* sequence, const char* message_type_to_add, vuln_pattern_t* pattern);
 
 char *chat_with_llm(char *prompt, char *model, int tries, float temperature);

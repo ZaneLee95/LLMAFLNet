@@ -1,0 +1,5 @@
+# Description: OS command injection in a URL parameter, often seen in CGI scripts.
+# Target Messages: GET,POST
+# Pattern:
+GET /tools/ping?host=127.0.0.1%3B%20/bin/id HTTP/1.1
+Host: 127.0.0.1

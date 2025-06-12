@@ -85,10 +85,11 @@ typedef kvec_t(khash_t(strSet)*) message_set_list;
 
 // Define a klist of vulnerability patterns
 #define __vuln_pattern_t_free(p) do { \
-    if (p) { \
-        free((p)->description); \
-        free((p)->target_messages); \
-        free((p)->pattern); \
+    if (*(p)) { \
+        free((*(p))->description); \
+        free((*(p))->target_messages); \
+        free((*(p))->pattern); \
+        free(*(p)); \
     } \
 } while(0)
 KLIST_INIT(vuln_patterns, vuln_pattern_t*, __vuln_pattern_t_free);
@@ -141,5 +142,8 @@ void init_vulnerability_templates(vulnerability_t *templates, int *template_coun
 void free_vulnerability_templates(vulnerability_t *templates, int template_count);
 int validate_generated_testcase(char *testcase, const char *protocol);
 void get_vulnerability_driven_seeds(const char *in_dir, vulnerability_t *templates, int template_count);
+
+// 更新函数声明
+void make_combination(khash_t(strSet)* sequence, const char** data, message_set_list* res, khiter_t st, khiter_t end, int index, int size);
 
 #endif // __CHAT_LLM_H

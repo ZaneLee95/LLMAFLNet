@@ -909,37 +909,37 @@ khash_t(strSet) * duplicate_hash(khash_t(strSet) * set)
 //         return newCombinations;
 //     }
 // }
-void make_combination(khash_t(strSet)* sequence, char** data , message_set_list* res,khiter_t st, khiter_t end, int index, int size);
+void make_combination(khash_t(strSet)* sequence, char** data, message_set_list* res, khiter_t st, khiter_t end, int index, int size);
 
 message_set_list message_combinations(khash_t(strSet)* sequence, int size)
 {
     message_set_list res;
     kv_init(res);
-    char* data[size];
-    make_combination(sequence,data, &res, kh_begin(sequence), kh_end(sequence), 0, size);
+    const char* data[size]; // 修改为 const char*
+    make_combination(sequence, data, &res, kh_begin(sequence), kh_end(sequence), 0, size);
     return res;
 }
 
-void make_combination(khash_t(strSet)* sequence, char** data , message_set_list* res,khiter_t st, khiter_t end,
+void make_combination(khash_t(strSet)* sequence, char** data, message_set_list* res, khiter_t st, khiter_t end,
                      int index, int size)
 {
-
     if (index == size)
     {
         khash_t(strSet)* combination = kh_init(strSet);
         int absent;
         for (int j=0; j<size; j++){
-            kh_put(strSet,combination, data[j],&absent );
+            kh_put(strSet, combination, data[j], &absent);
         }
-        kv_push(khash_t(strSet)*,*res,combination);
+        kv_push(khash_t(strSet)*, *res, combination);
         return;
     }
     for (khiter_t i=st; i != end && end-i+1 >= size-index; i++)
     {
-        if(!kh_exist(sequence,i))
+        if(!kh_exist(sequence, i))
             continue;
-        data[index] = kh_key(sequence,i);
-        make_combination(sequence, data,res, i+1, end, index+1, size);
+        // 修复：使用 strdup 复制字符串，避免丢失 const 限定符
+        data[index] = strdup(kh_key(sequence, i));
+        make_combination(sequence, data, res, i+1, end, index+1, size);
     }
 }
 

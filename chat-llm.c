@@ -148,6 +148,41 @@ char *chat_with_llm(char *prompt, char *model, int tries, float temperature)
     return answer;
 }
 
+char* construct_prompt_for_vuln_enrichment(const char* sequence, 
+                                           const char* message_type_to_add, 
+                                           vuln_pattern_t* pattern) 
+{
+    const char* prompt_template = 
+        "You are a security testing assistant. Your task is to enrich a sequence of protocol messages. "
+        "The original sequence is:\\n\"\"\"\\n%s\\n\"\"\"\\n"
+        "Please insert a '%s' message into this sequence. "
+        "Crucially, the new message must incorporate the following specific vulnerability pattern:\\n"
+        "Pattern Description: %s\\n"
+        "Pattern to inject:\\n\"\"\"\\n%s\\n\"\"\"\\n"
+        "Provide only the complete, modified sequence of client requests. Do not add any explanations.";
+
+    char* prompt = NULL;
+
+    // Escape the sequence for JSON embedding
+    json_object* seq_json = json_object_new_string(sequence);
+    const char* seq_escaped = json_object_to_json_string(seq_json);
+
+    asprintf(&prompt, prompt_template,
+             seq_escaped,
+             message_type_to_add,
+             pattern->description ? pattern->description : "N/A",
+             pattern->pattern);
+    
+    json_object_put(seq_json);
+
+    // The final prompt needs to be wrapped for the chat model format
+    char *final_prompt = NULL;
+    asprintf(&final_prompt, "[{\"role\": \"system\", \"content\": \"You are a helpful protocol security expert.\"}, {\"role\": \"user\", \"content\": \"%s\"}]", prompt);
+    
+    free(prompt);
+    return final_prompt;
+}
+
 char *construct_prompt_stall(char *protocol_name, char *examples, char *history)
 {
     char *template = "In the %s protocol, the communication history between the %s client and the %s server is as follows."
@@ -914,7 +949,7 @@ int min(int a, int b) {
     return a < b ? a : b;
 }
 
-char *enrich_sequence(char *sequence, khash_t(strSet) * missing_message_types)
+char *enrich_sequence_generic(char *sequence, khash_t(strSet) * missing_message_types)
 {
     const char *prompt_template =
         "The following is one sequence of client requests:\\n"
@@ -973,261 +1008,13 @@ char *enrich_sequence(char *sequence, khash_t(strSet) * missing_message_types)
     return response;
 }
 
-/* 构建针对特定漏洞的提示词 */
-char *construct_vulnerability_prompt(vulnerability_t *vulnerability, const char *protocol_grammar)
-{
-    char *prompt = NULL;
-    char *final_prompt = NULL;
+// New function that takes a specific pattern
+char *enrich_sequence_with_vuln_pattern(char *sequence, const char* message_type, vuln_pattern_t* pattern) {
+    char* prompt = construct_prompt_for_vuln_enrichment(sequence, message_type, pattern);
     
-    // 如果漏洞提供了特定的提示词模板，优先使用
-    if (vulnerability->prompt_template) {
-        // 结合协议语法和提示词模板构建最终提示词
-        asprintf(&prompt, 
-                "Given the %s protocol grammar:\n%s\n\n%s", 
-                vulnerability->protocol, 
-                protocol_grammar, 
-                vulnerability->prompt_template);
-    } else {
-        // 根据漏洞信息构建通用提示词
-        asprintf(&prompt, 
-                "Generate a valid %s protocol test case that targets a potential vulnerability.\n\n"
-                "Protocol: %s\n"
-                "Vulnerable message type: %s\n"
-                "Vulnerable field: %s\n"
-                "Trigger condition: %s\n"
-                "Description: %s\n\n"
-                "Protocol grammar reference:\n%s\n\n"
-                "Please generate a test case that follows the protocol grammar but contains inputs that might trigger this vulnerability. "
-                "Make sure the test case is syntactically valid but contains potentially problematic values for the specified field. "
-                "Return ONLY the raw protocol message(s) without any explanation.",
-                vulnerability->protocol,
-                vulnerability->protocol,
-                vulnerability->message_type,
-                vulnerability->field_name,
-                vulnerability->trigger_condition,
-                vulnerability->description,
-                protocol_grammar);
-    }
-    
-    // 构建最终的提示词格式
-    asprintf(&final_prompt, "[{\"role\": \"system\", \"content\": \"You are a helpful assistant specializing in network protocols and security testing.\"}, {\"role\": \"user\", \"content\": \"%s\"}]", prompt);
-    
+    // It's a targeted request, so we might want higher temperature for creativity
+    char* response = chat_with_llm(prompt, "turbo", ENRICHMENT_RETRIES, 0.7);
+
     free(prompt);
-    return final_prompt;
-}
-
-/* 使用漏洞信息富集测试用例 */
-char *enrich_with_vulnerability(char* sequence, vulnerability_t *vulnerability)
-{
-    // 提取协议语法 (简化版，实际实现可能需要从已有的语法提取相关部分)
-    // 这里假设我们已经有了协议语法的字符串表示
-    char *protocol_grammar = strdup(""); // 实际需要填充真实的协议语法
-    
-    // 构建提示词
-    char *prompt = construct_vulnerability_prompt(vulnerability, protocol_grammar);
-    
-    // 调用LLM生成测试用例
-    char *generated_testcase = chat_with_llm(prompt, "gpt", VUL_ENRICHMENT_RETRIES, 0.7);
-    
-    free(prompt);
-    free(protocol_grammar);
-    
-    return generated_testcase;
-}
-
-/* 初始化漏洞模板 */
-void init_vulnerability_templates(vulnerability_t *templates, int *template_count)
-{
-    *template_count = 0;
-    
-    // RTSP 协议中 Range 字段异常导致缓冲区溢出
-    templates[*template_count].vul_name = strdup("RTSP_Range_Overflow");
-    templates[*template_count].protocol = strdup("RTSP");
-    templates[*template_count].message_type = strdup("PLAY");
-    templates[*template_count].field_name = strdup("Range");
-    templates[*template_count].trigger_condition = strdup("超长值或特殊格式");
-    templates[*template_count].description = strdup("RTSP服务器处理PLAY请求时，如果Range字段格式异常可能导致缓冲区溢出");
-    templates[*template_count].prompt_template = strdup(
-        "For the RTSP protocol, generate a PLAY request with a malformed or oversized Range field that still follows the basic message structure.\n"
-        "Make sure the request looks realistic but may trigger a parser bug due to unusual Range value.\n"
-        "Common RTSP Range format is npt=start-end, but try to use extreme values, special characters, or malformed syntax that still appears valid.\n"
-        "Return ONLY the raw RTSP protocol message without any explanation."
-    );
-    (*template_count)++;
-    
-    // HTTP 协议中 Content-Length 与实际内容不匹配
-    templates[*template_count].vul_name = strdup("HTTP_Content_Length_Mismatch");
-    templates[*template_count].protocol = strdup("HTTP");
-    templates[*template_count].message_type = strdup("POST");
-    templates[*template_count].field_name = strdup("Content-Length");
-    templates[*template_count].trigger_condition = strdup("与实际内容大小不符");
-    templates[*template_count].description = strdup("HTTP服务器在处理POST请求时，如果Content-Length声明与实际内容大小不符可能导致缓冲区溢出或拒绝服务");
-    templates[*template_count].prompt_template = strdup(
-        "Generate an HTTP POST request where the Content-Length header value doesn't match the actual size of the message body.\n"
-        "This can be either much larger or smaller than the actual body size.\n"
-        "Include some typical HTTP headers and make the request look realistic.\n"
-        "Return ONLY the raw HTTP protocol message without any explanation."
-    );
-    (*template_count)++;
-    
-    // FTP协议中的路径遍历漏洞
-    templates[*template_count].vul_name = strdup("FTP_Path_Traversal");
-    templates[*template_count].protocol = strdup("FTP");
-    templates[*template_count].message_type = strdup("CWD");
-    templates[*template_count].field_name = strdup("path");
-    templates[*template_count].trigger_condition = strdup("包含../等目录遍历字符");
-    templates[*template_count].description = strdup("FTP服务器在处理CWD（改变工作目录）命令时，如果路径包含../等字符可能导致目录遍历漏洞");
-    templates[*template_count].prompt_template = strdup(
-        "Generate an FTP command sequence that attempts to exploit a path traversal vulnerability.\n"
-        "Include commands like CWD with path parameters containing sequences like '../' to try accessing files outside the intended directory.\n"
-        "Make the sequence look realistic while focusing on directory traversal patterns.\n"
-        "Return ONLY the raw FTP protocol commands without any explanation."
-    );
-    (*template_count)++;
-    
-    // SMTP命令注入漏洞
-    templates[*template_count].vul_name = strdup("SMTP_Command_Injection");
-    templates[*template_count].protocol = strdup("SMTP");
-    templates[*template_count].message_type = strdup("MAIL FROM");
-    templates[*template_count].field_name = strdup("sender");
-    templates[*template_count].trigger_condition = strdup("包含换行符或额外命令");
-    templates[*template_count].description = strdup("SMTP服务器处理MAIL FROM命令时，如果sender字段包含换行符可能导致命令注入");
-    templates[*template_count].prompt_template = strdup(
-        "Generate an SMTP session that attempts to exploit a command injection vulnerability.\n"
-        "Include a MAIL FROM command where the sender email address contains a newline character followed by an additional SMTP command.\n"
-        "Make the sequence look like a valid SMTP conversation but with the injection payload.\n"
-        "Return ONLY the raw SMTP protocol commands without any explanation."
-    );
-    (*template_count)++;
-}
-
-/* 释放漏洞模板资源 */
-void free_vulnerability_templates(vulnerability_t *templates, int template_count)
-{
-    for (int i = 0; i < template_count; i++) {
-        free(templates[i].vul_name);
-        free(templates[i].protocol);
-        free(templates[i].message_type);
-        free(templates[i].field_name);
-        free(templates[i].trigger_condition);
-        free(templates[i].description);
-        free(templates[i].prompt_template);
-    }
-}
-
-/* 验证生成的测试用例的语法正确性 */
-int validate_generated_testcase(char *testcase, const char *protocol)
-{
-    // 这里应该实现根据协议类型进行不同的验证逻辑
-    // 简单实现：检查是否为空，以及包含一些基本的协议关键字
-    
-    if (!testcase || strlen(testcase) < 5) {
-        return 0; // 太短，无效
-    }
-    
-    // 根据协议类型进行简单验证
-    if (strcmp(protocol, "RTSP") == 0) {
-        return (strstr(testcase, "RTSP/1.0") != NULL);
-    } else if (strcmp(protocol, "HTTP") == 0) {
-        return (strstr(testcase, "HTTP/1.") != NULL);
-    } else if (strcmp(protocol, "FTP") == 0) {
-        return (strstr(testcase, "CWD") != NULL || strstr(testcase, "USER") != NULL);
-    } else if (strcmp(protocol, "SMTP") == 0) {
-        return (strstr(testcase, "MAIL FROM") != NULL || strstr(testcase, "HELO") != NULL);
-    }
-    
-    return 1; // 默认认为有效（保守策略）
-}
-
-/* 获取由历史漏洞驱动的测试用例种子 */
-void get_vulnerability_driven_seeds(const char *in_dir, vulnerability_t *templates, int template_count)
-{
-    struct dirent **nl_files;
-    int nl_cnt = scandir(in_dir, &nl_files, NULL, alphasort);
-    
-    if (nl_cnt < 0) {
-        printf("Error reading directory %s\n", in_dir);
-        return;
-    }
-    
-    ACTF("Generating vulnerability-driven test cases...");
-    
-    // 遍历每个漏洞模板
-    for (int t = 0; t < template_count; t++) {
-        vulnerability_t *current_vul = &templates[t];
-        
-        // 为每个漏洞模板生成至少一个测试用例
-        char *generated_testcase = enrich_with_vulnerability(NULL, current_vul);
-        
-        if (generated_testcase && validate_generated_testcase(generated_testcase, current_vul->protocol)) {
-            // 创建新的种子文件
-            char *vul_seed_name = alloc_printf("vul_%s.raw", current_vul->vul_name);
-            char *vul_seed_path = alloc_printf("%s/%s", in_dir, vul_seed_name);
-            
-            ACTF("Creating vulnerability-driven seed: %s", vul_seed_name);
-            write_new_seeds(vul_seed_path, generated_testcase);
-            
-            ck_free(vul_seed_name);
-            ck_free(vul_seed_path);
-        }
-        
-        free(generated_testcase);
-        
-        // 对现有种子进行富集
-        for (int i = 0; i < MIN(nl_cnt, 5); i++) { // 限制处理前5个种子
-            char *nl_file_name = nl_files[i]->d_name;
-            
-            // 跳过特殊文件和已富集文件
-            if (strcmp(nl_file_name, ".") == 0 || strcmp(nl_file_name, "..") == 0 || 
-                strstr(nl_file_name, "enriched") != NULL || strstr(nl_file_name, "vul_") != NULL) {
-                continue;
-            }
-            
-            char *nl_file_path = alloc_printf("%s/%s", in_dir, nl_file_name);
-            
-            // 读取种子文件内容
-            FILE *nl_file = fopen(nl_file_path, "r");
-            if (!nl_file) {
-                ck_free(nl_file_path);
-                continue;
-            }
-            
-            fseek(nl_file, 0, SEEK_END);
-            size_t fsize = ftell(nl_file);
-            fseek(nl_file, 0, SEEK_SET);
-            
-            char *nl_file_content = ck_alloc(fsize + 1);
-            fread(nl_file_content, fsize, 1, nl_file);
-            nl_file_content[fsize] = '\0';
-            fclose(nl_file);
-            
-            // 使用当前漏洞模板富集种子
-            char *enriched_testcase = enrich_with_vulnerability(nl_file_content, current_vul);
-            
-            if (enriched_testcase && 
-                validate_generated_testcase(enriched_testcase, current_vul->protocol) && 
-                strcmp(format_string(enriched_testcase), format_string(nl_file_content)) != 0) {
-                
-                // 创建富集后的种子文件
-                char *enriched_name = alloc_printf("vul_%s_%s", current_vul->vul_name, nl_file_name);
-                char *enriched_path = alloc_printf("%s/%s", in_dir, enriched_name);
-                
-                ACTF("Creating vulnerability-enriched seed: %s", enriched_name);
-                write_new_seeds(enriched_path, enriched_testcase);
-                
-                ck_free(enriched_name);
-                ck_free(enriched_path);
-            }
-            
-            free(enriched_testcase);
-            ck_free(nl_file_content);
-            ck_free(nl_file_path);
-        }
-    }
-    
-    // 释放资源
-    for (int i = 0; i < nl_cnt; i++) {
-        free(nl_files[i]);
-    }
-    free(nl_files);
+    return response;
 }

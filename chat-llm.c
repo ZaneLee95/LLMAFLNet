@@ -915,7 +915,7 @@ message_set_list message_combinations(khash_t(strSet)* sequence, int size)
 {
     message_set_list res;
     kv_init(res);
-    const char* data[size]; // 修改为 const char*
+    char* data[size];
     make_combination(sequence, data, &res, kh_begin(sequence), kh_end(sequence), 0, size);
     return res;
 }
@@ -937,8 +937,9 @@ void make_combination(khash_t(strSet)* sequence, char** data, message_set_list* 
     {
         if(!kh_exist(sequence, i))
             continue;
-        // 修复：使用 strdup 复制字符串，避免丢失 const 限定符
-        data[index] = strdup(kh_key(sequence, i));
+        
+        // 使用类型转换来消除 const 警告
+        data[index] = (char*)kh_key(sequence, i);
         make_combination(sequence, data, res, i+1, end, index+1, size);
     }
 }

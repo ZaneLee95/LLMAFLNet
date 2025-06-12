@@ -146,4 +146,7 @@ void get_vulnerability_driven_seeds(const char *in_dir, vulnerability_t *templat
 // 更新函数声明，使用 char** 而不是 const char**
 void make_combination(khash_t(strSet)* sequence, char** data, message_set_list* res, khiter_t st, khiter_t end, int index, int size);
 
+// 添加最大模式大小常量
+#define MAX_PATTERN_SIZE (64 * 1024)  // 64KB 应该足够大
+
 #endif // __CHAT_LLM_H

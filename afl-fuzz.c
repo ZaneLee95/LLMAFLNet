@@ -2899,8 +2899,26 @@ void get_seeds_with_messsage_types(const char *in_dir, khash_t(strSet) * message
             khash_t(strSet)* subset = kv_A(message_subsets, j); 
             char *client_request_answer = enrich_sequence_generic(nl_file_content, subset);
             
-            // ... (same logic as above to process and write the new seed) ...
-            // ... (remember to give it a different name, e.g., "enriched_generic_...")
+            if (client_request_answer) {
+                // 处理响应，例如格式化和写入新种子
+                char *formatted_answer = format_request_message(client_request_answer);
+                if (formatted_answer) {
+                    // 写入新种子
+                    char *enriched_file_name;
+                    asprintf(&enriched_file_name, "enriched_generic_%s", nl_file_name);
+                    char *enriched_file_path = alloc_printf("%s/%s", in_dir, enriched_file_name);
+                    
+                    write_new_seeds(enriched_file_path, formatted_answer);
+                    
+                    free(enriched_file_name);
+                    ck_free(enriched_file_path);
+                    
+                    if (formatted_answer != client_request_answer) {
+                        free(formatted_answer);
+                    }
+                }
+                free(client_request_answer);
+            }
         }
         
         // ... (cleanup for message_subsets) ...

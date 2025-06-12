@@ -85,11 +85,11 @@ typedef kvec_t(khash_t(strSet)*) message_set_list;
 
 // Define a klist of vulnerability patterns
 #define __vuln_pattern_t_free(x) do { \
-    if (x) { \
-        free((x)->description); \
-        free((x)->target_messages); \
-        free((x)->pattern); \
-        free(x); \
+    if ((x)->data) { \
+        free(((x)->data)->description); \
+        free(((x)->data)->target_messages); \
+        free(((x)->data)->pattern); \
+        free((x)->data); \
     } \
 } while(0)
 KLIST_INIT(vuln_patterns, vuln_pattern_t*, __vuln_pattern_t_free);

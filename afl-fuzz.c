@@ -436,18 +436,26 @@ u32 reward_grammar;
 
 // New function to load vulnerability patterns from the directory structure
 void load_vulnerability_patterns(const char* protocol_name) {
+    if (!protocol_name) return;
+    
     char pattern_dir_path[PATH_MAX];
-    snprintf(pattern_dir_path, sizeof(pattern_dir_path), "vuln_patterns/%s", protocol_name);
-
-    DIR *d = opendir(pattern_dir_path);
+    snprintf(pattern_dir_path, sizeof(pattern_dir_path), "./vuln_patterns/%s", protocol_name);
+    
+    DIR* d = opendir(pattern_dir_path);
     if (!d) {
-        WARNF("Vulnerability pattern directory not found for protocol %s: %s", protocol_name, pattern_dir_path);
+        WARNF("Could not open vulnerability patterns directory for %s: %s", 
+              protocol_name, pattern_dir_path);
         return;
     }
 
     ACTF("Loading vulnerability patterns for %s...", protocol_name);
 
     klist_t(vuln_patterns)* patterns_list = kl_init(vuln_patterns);
+    if (!patterns_list) {
+        WARNF("Failed to initialize patterns list");
+        closedir(d);
+        return;
+    }
     
     struct dirent* de;
     while ((de = readdir(d))) {
@@ -463,6 +471,12 @@ void load_vulnerability_patterns(const char* protocol_name) {
         }
 
         vuln_pattern_t* p = ck_alloc(sizeof(vuln_pattern_t));
+        if (!p) {
+            WARNF("Failed to allocate memory for pattern");
+            fclose(f);
+            continue;
+        }
+        
         p->description = NULL;
         p->target_messages = NULL;
         p->pattern = NULL;
@@ -470,22 +484,46 @@ void load_vulnerability_patterns(const char* protocol_name) {
         char line[MAX_LINE];
         char* current_pattern_buffer = NULL;
         size_t pattern_size = 0;
-
+        int in_pattern_section = 0;
+        
         while (fgets(line, sizeof(line), f)) {
-            if (strncmp(line, "# Description: ", 15) == 0) {
-                p->description = ck_strdup(line + 15);
-                p->description[strcspn(p->description, "\r\n")] = 0; // Trim newline
-            } else if (strncmp(line, "# Target Messages: ", 19) == 0) {
-                p->target_messages = ck_strdup(line + 19);
-                p->target_messages[strcspn(p->target_messages, "\r\n")] = 0; // Trim newline
-            } else if (strncmp(line, "# Pattern:", 10) == 0) {
-                // The lines following this are the pattern
-                pattern_size = 0;
-                current_pattern_buffer = NULL;
-            } else if (line[0] != '#') {
-                // Append to pattern buffer
-                size_t line_len = strlen(line);
-                current_pattern_buffer = ck_realloc(current_pattern_buffer, pattern_size + line_len + 1);
+            size_t line_len = strlen(line);
+            
+            // 移除行尾的换行符
+            if (line_len > 0 && (line[line_len-1] == '\n' || line[line_len-1] == '\r')) {
+                line[--line_len] = '\0';
+                if (line_len > 0 && line[line_len-1] == '\r')
+                    line[--line_len] = '\0';
+            }
+            
+            if (strncmp(line, "DESCRIPTION:", 12) == 0) {
+                p->description = ck_strdup(line + 12);
+                while (isspace(*p->description)) p->description++;
+            } 
+            else if (strncmp(line, "TARGET_MESSAGES:", 16) == 0) {
+                p->target_messages = ck_strdup(line + 16);
+                while (isspace(*p->target_messages)) p->target_messages++;
+            }
+            else if (strncmp(line, "PATTERN:", 8) == 0) {
+                in_pattern_section = 1;
+                current_pattern_buffer = ck_alloc(MAX_PATTERN_SIZE);
+                if (!current_pattern_buffer) {
+                    WARNF("Failed to allocate memory for pattern buffer");
+                    break;
+                }
+                current_pattern_buffer[0] = '\0';
+            }
+            else if (in_pattern_section) {
+                if (pattern_size + line_len + 2 >= MAX_PATTERN_SIZE) {
+                    WARNF("Pattern too large in file: %s", file_path);
+                    break;
+                }
+                
+                if (pattern_size > 0) {
+                    current_pattern_buffer[pattern_size++] = '\n';
+                    current_pattern_buffer[pattern_size] = '\0';
+                }
+                
                 memcpy(current_pattern_buffer + pattern_size, line, line_len);
                 pattern_size += line_len;
                 current_pattern_buffer[pattern_size] = '\0';
@@ -498,6 +536,7 @@ void load_vulnerability_patterns(const char* protocol_name) {
 
         if (p->target_messages && p->pattern) {
             *kl_pushp(vuln_patterns, patterns_list) = p;
+            ACTF("Loaded pattern: %s", p->description ? p->description : "(unnamed)");
         } else {
             ck_free(p->description);
             ck_free(p->target_messages);
@@ -512,9 +551,15 @@ void load_vulnerability_patterns(const char* protocol_name) {
     if (patterns_list->size > 0) {
         int ret;
         khiter_t k = kh_put(vuln_map, vuln_patterns_map, protocol_name, &ret);
-        kh_value(vuln_patterns_map, k) = patterns_list;
-        OKF("Loaded %zu vulnerability patterns for %s.", patterns_list->size, protocol_name);
+        if (ret != -1) {
+            kh_value(vuln_patterns_map, k) = patterns_list;
+            OKF("Loaded %zu vulnerability patterns for %s.", patterns_list->size, protocol_name);
+        } else {
+            WARNF("Failed to store patterns in hash map");
+            kl_destroy(vuln_patterns, patterns_list);
+        }
     } else {
+        WARNF("No vulnerability patterns loaded for %s", protocol_name);
         kl_destroy(vuln_patterns, patterns_list);
     }
 }

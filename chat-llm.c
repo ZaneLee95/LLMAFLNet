@@ -165,19 +165,33 @@ char* construct_prompt_for_vuln_enrichment(const char* sequence,
 
     // Escape the sequence for JSON embedding
     json_object* seq_json = json_object_new_string(sequence);
+    if (!seq_json) {
+        return NULL; // 处理内存分配失败
+    }
+    
     const char* seq_escaped = json_object_to_json_string(seq_json);
+    if (!seq_escaped) {
+        json_object_put(seq_json);
+        return NULL;
+    }
 
-    asprintf(&prompt, prompt_template,
+    if (asprintf(&prompt, prompt_template,
              seq_escaped,
              message_type_to_add,
              pattern->description ? pattern->description : "N/A",
-             pattern->pattern);
+             pattern->pattern) < 0) {
+        json_object_put(seq_json);
+        return NULL; // 处理asprintf失败
+    }
     
     json_object_put(seq_json);
 
     // The final prompt needs to be wrapped for the chat model format
     char *final_prompt = NULL;
-    asprintf(&final_prompt, "[{\"role\": \"system\", \"content\": \"You are a helpful protocol security expert.\"}, {\"role\": \"user\", \"content\": \"%s\"}]", prompt);
+    if (asprintf(&final_prompt, "[{\"role\": \"system\", \"content\": \"You are a helpful protocol security expert.\"}, {\"role\": \"user\", \"content\": \"%s\"}]", prompt) < 0) {
+        free(prompt);
+        return NULL; // 处理asprintf失败
+    }
     
     free(prompt);
     return final_prompt;
@@ -1011,11 +1025,28 @@ char *enrich_sequence_generic(char *sequence, khash_t(strSet) * missing_message_
 
 // New function that takes a specific pattern
 char *enrich_sequence_with_vuln_pattern(char *sequence, const char* message_type, vuln_pattern_t* pattern) {
+    if (!sequence || !message_type || !pattern || !pattern->pattern) {
+        return NULL; // 参数验证
+    }
+    
     char* prompt = construct_prompt_for_vuln_enrichment(sequence, message_type, pattern);
+    if (!prompt) {
+        return NULL; // 处理提示词构建失败
+    }
     
     // It's a targeted request, so we might want higher temperature for creativity
     char* response = chat_with_llm(prompt, "turbo", ENRICHMENT_RETRIES, 0.7);
-
+    
     free(prompt);
-    return response;
+    
+    if (response) {
+        // 清理和格式化响应
+        char* cleaned_response = format_request_message(response);
+        if (cleaned_response != response) { // 如果格式化创建了新的字符串
+            free(response);
+        }
+        return cleaned_response;
+    }
+    
+    return NULL;
 }

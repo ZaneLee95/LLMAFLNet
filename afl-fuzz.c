@@ -443,9 +443,24 @@ void load_vulnerability_patterns(const char* protocol_name) {
     
     DIR* d = opendir(pattern_dir_path);
     if (!d) {
-        WARNF("Could not open vulnerability patterns directory for %s: %s", 
-              protocol_name, pattern_dir_path);
-        return;
+        // 目录不存在，尝试创建
+        if (mkdir("./vuln_patterns", 0700) != 0 && errno != EEXIST) {
+            WARNF("Could not create vulnerability patterns root directory: ./vuln_patterns");
+        }
+        
+        if (mkdir(pattern_dir_path, 0700) != 0 && errno != EEXIST) {
+            WARNF("Could not create vulnerability patterns directory for %s: %s", 
+                  protocol_name, pattern_dir_path);
+            return;
+        }
+        
+        // 尝试再次打开目录
+        d = opendir(pattern_dir_path);
+        if (!d) {
+            WARNF("Could not open vulnerability patterns directory for %s: %s", 
+                  protocol_name, pattern_dir_path);
+            return;
+        }
     }
 
     ACTF("Loading vulnerability patterns for %s...", protocol_name);
@@ -595,6 +610,14 @@ void setup_llm_grammars()
 
     char *grammar_output_path = alloc_printf("%s/protocol-grammars/llm-grammar-output-%d", out_dir, iter);
     int grammar_output_fd = open(grammar_output_path, O_WRONLY | O_CREAT, 0600);
+    
+    // 添加文件描述符检查
+    if (grammar_output_fd < 0) {
+        WARNF("Unable to create output file: %s (errno: %d)", grammar_output_path, errno);
+        ck_free(grammar_output_path);
+        free(combined_templates);
+        goto free_remaining;
+    }
 
     ck_write(grammar_output_fd, combined_templates, strlen(combined_templates), grammar_output_path);
 
@@ -660,6 +683,12 @@ void setup_llm_grammars()
       char *pattern_path = alloc_printf("%s/protocol-grammars/pattern-%d", out_dir, pattern_index);
       pattern_index++;
       int pattern_fd = open(pattern_path, O_WRONLY | O_CREAT, 0600);
+      
+      if (pattern_fd < 0) {
+        WARNF("Unable to create pattern file: %s (errno: %d)", pattern_path, errno);
+        ck_free(pattern_path);
+        continue;
+      }
 
       char *message_type = extract_message_pattern(header_str, field_table, patterns, pattern_fd, pattern_path);
       if (message_type != NULL)
@@ -3898,7 +3927,6 @@ EXP_ST void init_forkserver(char **argv)
 static u8 run_target(char **argv, u32 timeout)
 {
 
-  static struct itimerval it;
   static u32 prev_timed_out = 0;
   static u64 exec_ms = 0;
 

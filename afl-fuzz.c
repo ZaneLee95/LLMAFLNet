@@ -2951,16 +2951,20 @@ void get_seeds_with_messsage_types(const char *in_dir, khash_t(strSet) * message
                         char *formatted_unescaped_client_requests = format_string(unescaped_client_requests);
                         
                         if (formatted_unescaped_client_requests && strcmp(formatted_unescaped_client_requests, formatted_nl_file_content) != 0) {
-                            unescaped_client_requests = format_request_message(unescaped_client_requests);
+                            // format_request_message 会释放 unescaped_client_requests
+                            char *formatted_requests = format_request_message(unescaped_client_requests);
                             
                             char *enriched_file_name;
                             asprintf(&enriched_file_name, "enriched_vuln_%s_%s", token, nl_file_name);
                             char *enriched_file_path = alloc_printf("%s/%s", in_dir, enriched_file_name);
                             
-                            write_new_seeds(enriched_file_path, unescaped_client_requests);
+                            write_new_seeds(enriched_file_path, formatted_requests);
                             
                             free(enriched_file_name);
                             ck_free(enriched_file_path);
+                            free(formatted_requests);
+                        } else {
+                            free(unescaped_client_requests);
                         }
                         free(client_request_answer);
                     }
@@ -2987,6 +2991,7 @@ void get_seeds_with_messsage_types(const char *in_dir, khash_t(strSet) * message
             
             if (client_request_answer) {
                 // 处理响应，例如格式化和写入新种子
+                // 注意：format_request_message 会释放 client_request_answer
                 char *formatted_answer = format_request_message(client_request_answer);
                 if (formatted_answer) {
                     // 写入新种子
@@ -2999,11 +3004,10 @@ void get_seeds_with_messsage_types(const char *in_dir, khash_t(strSet) * message
                     free(enriched_file_name);
                     ck_free(enriched_file_path);
                     
-                    if (formatted_answer != client_request_answer) {
-                        free(formatted_answer);
-                    }
+                    // 释放格式化后的答案
+                    free(formatted_answer);
                 }
-                free(client_request_answer);
+                // client_request_answer 已经被 format_request_message 释放，不要再次释放
             }
         }
         

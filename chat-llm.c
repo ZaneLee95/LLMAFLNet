@@ -348,7 +348,10 @@ char *format_request_message(char *message)
         max_len++;
     }
     res[res_len++] = '\0';
+    
+    // 释放原始消息
     free(message);
+    
     return res;
 }
 
@@ -596,8 +599,8 @@ char *extract_message_pattern(const char *header_str, khash_t(field_table) * fie
 
     pcre2_match_data_free(match_data);
     pcre2_code_free(replacer);
-    printf("Header pattern is %s\n", header_pattern);
-    printf("Fields pattern is %s\n", fields_pattern);
+    // printf("Header pattern is %s\n", header_pattern);        //For debug
+    // printf("Fields pattern is %s\n", fields_pattern);        //For debug
 
     if (debug_file != -1 && debug_file_name != NULL)
     {

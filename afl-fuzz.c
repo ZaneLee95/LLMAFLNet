@@ -435,6 +435,9 @@ u32 reward_random;
 u32 reward_grammar;
 
 // New function to load vulnerability patterns from the directory structure
+/* 递归创建目录路径的函数 */
+static int create_directory_recursive(const char *path);
+
 void load_vulnerability_patterns(const char* protocol_name) {
     if (!protocol_name) return;
     
@@ -609,6 +612,15 @@ void setup_llm_grammars()
     asprintf(&combined_templates, "%s\n%s", templates_answer, remaining_templates);
 
     char *grammar_output_path = alloc_printf("%s/protocol-grammars/llm-grammar-output-%d", out_dir, iter);
+    
+    // 确保输出目录存在
+    char *last_slash = strrchr(grammar_output_path, '/');
+    if (last_slash) {
+        *last_slash = '\0';
+        create_directory_recursive(grammar_output_path);
+        *last_slash = '/';
+    }
+    
     int grammar_output_fd = open(grammar_output_path, O_WRONLY | O_CREAT, 0600);
     
     // 添加文件描述符检查
@@ -682,6 +694,15 @@ void setup_llm_grammars()
 
       char *pattern_path = alloc_printf("%s/protocol-grammars/pattern-%d", out_dir, pattern_index);
       pattern_index++;
+      
+      // 确保输出目录存在
+      char *last_slash = strrchr(pattern_path, '/');
+      if (last_slash) {
+        *last_slash = '\0';
+        create_directory_recursive(pattern_path);
+        *last_slash = '/';
+      }
+      
       int pattern_fd = open(pattern_path, O_WRONLY | O_CREAT, 0600);
       
       if (pattern_fd < 0) {
@@ -4602,33 +4623,40 @@ static void perform_dry_run(char **argv)
 
 static void link_or_copy(u8 *old_path, u8 *new_path)
 {
+    // 确保目标目录存在
+    char *last_slash = strrchr(new_path, '/');
+    if (last_slash) {
+        *last_slash = '\0';
+        create_directory_recursive(new_path);
+        *last_slash = '/';
+    }
 
-  s32 i = link(old_path, new_path);
-  s32 sfd, dfd;
-  u8 *tmp;
+    s32 i = link(old_path, new_path);
+    s32 sfd, dfd;
+    u8 *tmp;
 
-  if (!i)
-    return;
+    if (!i)
+        return;
 
-  sfd = open(old_path, O_RDONLY);
-  if (sfd < 0)
-    PFATAL("Unable to open '%s'", old_path);
+    sfd = open(old_path, O_RDONLY);
+    if (sfd < 0)
+        PFATAL("Unable to open '%s'", old_path);
 
-  dfd = open(new_path, O_WRONLY | O_CREAT | O_EXCL, 0600);
-  if (dfd < 0)
-    PFATAL("Unable to create '%s'", new_path);
+    dfd = open(new_path, O_WRONLY | O_CREAT | O_EXCL, 0600);
+    if (dfd < 0)
+        PFATAL("Unable to create '%s'", new_path);
 
-  tmp = ck_alloc(64 * 1024);
+    tmp = ck_alloc(64 * 1024);
 
-  while ((i = read(sfd, tmp, 64 * 1024)) > 0)
-    ck_write(dfd, tmp, i, new_path);
+    while ((i = read(sfd, tmp, 64 * 1024)) > 0)
+        ck_write(dfd, tmp, i, new_path);
 
-  if (i < 0)
-    PFATAL("read() failed");
+    if (i < 0)
+        PFATAL("read() failed");
 
-  ck_free(tmp);
-  close(sfd);
-  close(dfd);
+    ck_free(tmp);
+    close(sfd);
+    close(dfd);
 }
 
 static void nuke_resume_dir(void);

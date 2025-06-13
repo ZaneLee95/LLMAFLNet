@@ -299,6 +299,7 @@ char *extract_stalled_message(char *message, size_t message_len)
 
 char *format_request_message(char *message)
 {
+    if (!message) return NULL;
 
     int message_len = strlen(message);
     int max_len = message_len;
@@ -349,9 +350,8 @@ char *format_request_message(char *message)
     }
     res[res_len++] = '\0';
     
-    // 释放原始消息
-    free(message);
-    
+    // 我们不需要在这里释放message，因为它来自malloc系统，而不是ck_alloc系统
+    // 在调用者已经做了释放处理，或者是返回后再处理，不要在这里处理
     return res;
 }
 
@@ -1080,8 +1080,10 @@ char *enrich_sequence_with_vuln_pattern(char *sequence, const char* message_type
     free(prompt);
     
     if (response) {
-        // 清理和格式化响应 - 注意format_request_message内部会释放response
+        // 清理和格式化响应
         char* cleaned_response = format_request_message(response);
+        // 由于format_request_message不再释放response，我们需要手动释放
+        free(response);
         return cleaned_response;
     }
     

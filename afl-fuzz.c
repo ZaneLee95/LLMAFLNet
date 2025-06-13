@@ -2951,8 +2951,9 @@ void get_seeds_with_messsage_types(const char *in_dir, khash_t(strSet) * message
                         char *formatted_unescaped_client_requests = format_string(unescaped_client_requests);
                         
                         if (formatted_unescaped_client_requests && strcmp(formatted_unescaped_client_requests, formatted_nl_file_content) != 0) {
-                            // format_request_message 会释放 unescaped_client_requests
+                            // format_request_message 不再释放输入指针
                             char *formatted_requests = format_request_message(unescaped_client_requests);
+                            free(unescaped_client_requests);
                             
                             char *enriched_file_name;
                             asprintf(&enriched_file_name, "enriched_vuln_%s_%s", token, nl_file_name);
@@ -2991,8 +2992,10 @@ void get_seeds_with_messsage_types(const char *in_dir, khash_t(strSet) * message
             
             if (client_request_answer) {
                 // 处理响应，例如格式化和写入新种子
-                // 注意：format_request_message 会释放 client_request_answer
                 char *formatted_answer = format_request_message(client_request_answer);
+                // 释放原始消息，因为format_request_message不再释放它
+                free(client_request_answer);
+                
                 if (formatted_answer) {
                     // 写入新种子
                     char *enriched_file_name;
@@ -3004,10 +3007,9 @@ void get_seeds_with_messsage_types(const char *in_dir, khash_t(strSet) * message
                     free(enriched_file_name);
                     ck_free(enriched_file_path);
                     
-                    // 释放格式化后的答案
-                    free(formatted_answer);
+                    // formatted_answer是由ck_alloc分配的，使用ck_free释放
+                    ck_free(formatted_answer);
                 }
-                // client_request_answer 已经被 format_request_message 释放，不要再次释放
             }
         }
         
@@ -7253,7 +7255,9 @@ AFLNET_REGIONS_SELECTION:;
         if (stall_message == NULL)
           goto free_stall;
 
-        stall_message = format_request_message(stall_message);
+        char *formatted_stall = format_request_message(stall_message);
+        free(stall_message);
+        stall_message = formatted_stall;
 
         if (stall_message != NULL)
         {

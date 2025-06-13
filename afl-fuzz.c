@@ -3039,7 +3039,7 @@ static void enrich_testcases(void)
   
   if (template_count > 0) {
     // 基于漏洞模板生成测试用例
-    get_vulnerability_driven_seeds(in_dir, templates, template_count);
+    get_vulnerability_driven_seeds(in_dir, (char*)out_dir, templates, template_count);
     
     // 释放漏洞模板资源
     free_vulnerability_templates(templates, template_count);

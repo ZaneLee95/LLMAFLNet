@@ -141,7 +141,7 @@ message_set_list message_combinations(khash_t(strSet)* sequence, int size);
 
 // 漏洞驱动用例富集相关函数
 int validate_generated_testcase(char *testcase, const char *protocol);
-void get_vulnerability_driven_seeds(const char *in_dir, vulnerability_t *templates, int template_count);
+void get_vulnerability_driven_seeds(const char *in_dir, const char *out_dir, vulnerability_t *templates, int template_count);
 
 // 添加漏洞模板初始化和释放的函数声明
 void init_vulnerability_templates(vulnerability_t *templates, int *template_count);

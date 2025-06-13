@@ -100,6 +100,10 @@ KHASH_INIT(consistency_table, const char *, khash_t(field_table) *, 1, kh_str_ha
 // 定义一个 map 结构体，保存 {key: 协议名称（字符串），value: 列表漏洞模式} 的键值对
 KHASH_MAP_INIT_STR(vuln_map, klist_t(vuln_patterns)*);
 
+// 声明外部变量
+extern char* protocol_name;
+extern khash_t(vuln_map)* vuln_patterns_map;
+
 // 用于构建漏洞感知提示的新函数原型
 char* construct_prompt_for_vuln_enrichment(const char* sequence, const char* message_type_to_add, vuln_pattern_t* pattern);
 
@@ -136,8 +140,6 @@ char *format_string(char *state_string);
 message_set_list message_combinations(khash_t(strSet)* sequence, int size);
 
 // 漏洞驱动用例富集相关函数
-void init_vulnerability_templates(vulnerability_t *templates, int *template_count);
-void free_vulnerability_templates(vulnerability_t *templates, int template_count);
 int validate_generated_testcase(char *testcase, const char *protocol);
 void get_vulnerability_driven_seeds(const char *in_dir, vulnerability_t *templates, int template_count);
 

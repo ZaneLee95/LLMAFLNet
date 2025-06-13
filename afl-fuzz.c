@@ -9687,6 +9687,14 @@ EXP_ST void setup_dirs_fds(void)
     PFATAL("Unable to create '%s'", tmp);
   ck_free(tmp);
 
+  /* Directory for flagging queue entries that went through
+     deterministic fuzzing in the past. */
+
+  tmp = alloc_printf("%s/queue/.state/deterministic_done/", out_dir);
+  if (mkdir(tmp, 0700))
+    PFATAL("Unable to create '%s'", tmp);
+  ck_free(tmp);
+
   /* Directory with the auto-selected dictionary entries. */
 
   tmp = alloc_printf("%s/queue/.state/auto_extras/", out_dir);

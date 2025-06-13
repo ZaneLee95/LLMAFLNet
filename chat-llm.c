@@ -9,6 +9,9 @@
 #include "chat-llm.h"
 #include "alloc-inl.h"
 #include "hash.h"
+#include "types.h"
+#include "debug.h"
+#include "khash.h"
 
 // -lcurl -ljson-c -lpcre2-8
 // apt install libcurl4-openssl-dev libjson-c-dev libpcre2-dev libpcre2-8-0
@@ -1023,6 +1026,39 @@ char *enrich_sequence_generic(char *sequence, khash_t(strSet) * missing_message_
     return response;
 }
 
+// 实现历史漏洞富集函数 - 兼容旧接口，与新接口桥接
+char *enrich_with_vulnerability(char* sequence, vulnerability_t *vulnerability) {
+    if (!sequence || !vulnerability) {
+        return NULL; // 参数验证
+    }
+    
+    // 创建临时的vuln_pattern_t结构，用于桥接到新接口
+    vuln_pattern_t temp_pattern;
+    temp_pattern.name = vulnerability->name;
+    temp_pattern.description = vulnerability->description;
+    temp_pattern.pattern = vulnerability->pattern;
+    
+    // 解析适用的消息类型
+    char* first_message_type = NULL;
+    if (vulnerability->applicable_message_types) {
+        // 复制一份，因为strtok会修改原字符串
+        char* types_copy = ck_strdup(vulnerability->applicable_message_types);
+        first_message_type = strtok(types_copy, ",");
+        
+        if (first_message_type) {
+            // 使用第一个适用的消息类型
+            char* result = enrich_sequence_with_vuln_pattern(sequence, first_message_type, &temp_pattern);
+            ck_free(types_copy);
+            return result;
+        }
+        
+        ck_free(types_copy);
+    }
+    
+    // 如果没有指定消息类型，尝试使用通用富集
+    return NULL;
+}
+
 // New function that takes a specific pattern
 char *enrich_sequence_with_vuln_pattern(char *sequence, const char* message_type, vuln_pattern_t* pattern) {
     if (!sequence || !message_type || !pattern || !pattern->pattern) {
@@ -1052,13 +1088,6 @@ char *enrich_sequence_with_vuln_pattern(char *sequence, const char* message_type
 }
 
 // 实现漏洞模板相关函数
-
-void init_vulnerability_templates(vulnerability_t* templates, int* template_count) {
-    // 这个函数可以保留为空，因为我们已经从文件加载了漏洞模式
-    // 或者可以添加一些默认模板，以防文件加载失败
-    *template_count = 0;
-}
-
 void get_vulnerability_driven_seeds(const char* in_dir, vulnerability_t* templates, int template_count) {
     if (!in_dir) return;
     
@@ -1174,7 +1203,93 @@ void get_vulnerability_driven_seeds(const char* in_dir, vulnerability_t* templat
     closedir(d);
 }
 
-void free_vulnerability_templates(vulnerability_t* templates, int template_count) {
-    // 这个函数可以保留为空，因为我们没有创建任何模板
-    // 或者可以添加一些清理代码，以防我们在 init_vulnerability_templates 中添加了默认模板
+// 实现验证生成的测试用例函数
+int validate_generated_testcase(char *testcase, const char *protocol) {
+    if (!testcase || !protocol) {
+        return 0; // 无效参数
+    }
+    
+    // 基本验证：检查非空且长度合理
+    size_t len = strlen(testcase);
+    if (len <= 0 || len > MAX_FILE) {
+        return 0;
+    }
+    
+    // 协议特定验证
+    if (strcmp(protocol, "RTSP") == 0) {
+        // RTSP请求必须包含方法和RTSP版本
+        if (strstr(testcase, "RTSP/1.0") == NULL && 
+            !(strstr(testcase, "DESCRIBE") || strstr(testcase, "SETUP") || 
+              strstr(testcase, "PLAY") || strstr(testcase, "PAUSE") || 
+              strstr(testcase, "TEARDOWN") || strstr(testcase, "OPTIONS") ||
+              strstr(testcase, "ANNOUNCE") || strstr(testcase, "RECORD") || 
+              strstr(testcase, "REDIRECT") || strstr(testcase, "SET_PARAMETER") || 
+              strstr(testcase, "GET_PARAMETER"))) {
+            return 0;
+        }
+    } else if (strcmp(protocol, "FTP") == 0) {
+        // FTP命令格式验证
+        if (!(strstr(testcase, "USER") || strstr(testcase, "PASS") || 
+              strstr(testcase, "ACCT") || strstr(testcase, "CWD") || 
+              strstr(testcase, "CDUP") || strstr(testcase, "SMNT") || 
+              strstr(testcase, "QUIT") || strstr(testcase, "REIN") ||
+              strstr(testcase, "PORT") || strstr(testcase, "PASV") || 
+              strstr(testcase, "TYPE") || strstr(testcase, "STRU") || 
+              strstr(testcase, "MODE") || strstr(testcase, "RETR") ||
+              strstr(testcase, "STOR") || strstr(testcase, "STOU") ||
+              strstr(testcase, "APPE") || strstr(testcase, "ALLO") ||
+              strstr(testcase, "REST") || strstr(testcase, "RNFR") ||
+              strstr(testcase, "RNTO") || strstr(testcase, "ABOR") ||
+              strstr(testcase, "DELE") || strstr(testcase, "RMD") ||
+              strstr(testcase, "MKD") || strstr(testcase, "PWD") ||
+              strstr(testcase, "LIST") || strstr(testcase, "NLST") ||
+              strstr(testcase, "SITE") || strstr(testcase, "SYST") ||
+              strstr(testcase, "STAT") || strstr(testcase, "HELP") ||
+              strstr(testcase, "NOOP"))) {
+            return 0;
+        }
+    } else if (strcmp(protocol, "SMTP") == 0) {
+        // SMTP命令验证
+        if (!(strstr(testcase, "HELO") || strstr(testcase, "EHLO") ||
+              strstr(testcase, "MAIL FROM") || strstr(testcase, "RCPT TO") ||
+              strstr(testcase, "DATA") || strstr(testcase, "RSET") ||
+              strstr(testcase, "QUIT") || strstr(testcase, "VRFY") ||
+              strstr(testcase, "EXPN") || strstr(testcase, "HELP") ||
+              strstr(testcase, "NOOP"))) {
+            return 0;  
+        }
+    } else if (strcmp(protocol, "HTTP") == 0) {
+        // HTTP请求验证
+        if (!(strstr(testcase, "GET") || strstr(testcase, "POST") ||
+              strstr(testcase, "PUT") || strstr(testcase, "DELETE") ||
+              strstr(testcase, "HEAD") || strstr(testcase, "OPTIONS") ||
+              strstr(testcase, "CONNECT") || strstr(testcase, "TRACE") ||
+              strstr(testcase, "PATCH"))) {
+            return 0;
+        }
+        
+        // 检查是否包含HTTP版本
+        if (strstr(testcase, "HTTP/1.0") == NULL && 
+            strstr(testcase, "HTTP/1.1") == NULL && 
+            strstr(testcase, "HTTP/2") == NULL) {
+            return 0;
+        }
+    }
+    
+    // 通用验证：确保请求以适当的终止符结束
+    if (strstr(testcase, "\r\n\r\n") == NULL && 
+        strstr(testcase, "\n\n") == NULL) {
+        // 添加终止符
+        char* terminated = malloc(len + 5);
+        if (!terminated) {
+            return 0;
+        }
+        
+        strcpy(terminated, testcase);
+        strcat(terminated, "\r\n\r\n");
+        strcpy(testcase, terminated);
+        free(terminated);
+    }
+    
+    return 1; // 验证通过
 }

@@ -436,7 +436,43 @@ u32 reward_grammar;
 
 // New function to load vulnerability patterns from the directory structure
 /* 递归创建目录路径的函数 */
-static int create_directory_recursive(const char *path);
+static int create_directory_recursive(const char *path) {
+    char tmp[PATH_MAX];
+    char *p = NULL;
+    size_t len;
+    int ret;
+
+    // 复制路径以便操作
+    strncpy(tmp, path, PATH_MAX);
+    tmp[PATH_MAX - 1] = '\0';
+    len = strlen(tmp);
+
+    // 删除路径末尾的'/'
+    if (tmp[len - 1] == '/')
+        tmp[len - 1] = '\0';
+
+    // 递归创建目录
+    for (p = tmp + 1; *p; p++) {
+        if (*p == '/') {
+            *p = '\0';
+            ret = mkdir(tmp, 0700);
+            if (ret != 0 && errno != EEXIST) {
+                WARNF("Failed to create directory: %s (errno: %d)", tmp, errno);
+                return -1;
+            }
+            *p = '/';
+        }
+    }
+    
+    // 创建最终目录
+    ret = mkdir(tmp, 0700);
+    if (ret != 0 && errno != EEXIST) {
+        WARNF("Failed to create directory: %s (errno: %d)", tmp, errno);
+        return -1;
+    }
+    
+    return 0;
+}
 
 void load_vulnerability_patterns(const char* protocol_name) {
     if (!protocol_name) return;
@@ -4084,7 +4120,7 @@ static u8 run_target(char **argv, u32 timeout)
   }
 
   /* Configure timeout, as requested by user, then wait for child to terminate. */
-
+  struct itimerval it;
   it.it_value.tv_sec = (timeout / 1000);
   it.it_value.tv_usec = (timeout % 1000) * 1000;
 
@@ -9809,9 +9845,24 @@ EXP_ST void setup_dirs_fds(void)
   /* All output from the LLM and resulting grammars -- for debugging purposes. */
 
   tmp = alloc_printf("%s/protocol-grammars", out_dir);
-  if (mkdir(tmp, 0700))
+  if (mkdir(tmp, 0700) && errno != EEXIST)
     PFATAL("Unable to create '%s'", tmp);
   ck_free(tmp);
+  
+  /* 确保漏洞模式目录存在 */
+  if (protocol_name) {
+    tmp = alloc_printf("./vuln_patterns");
+    if (mkdir(tmp, 0700) && errno != EEXIST) {
+      WARNF("Could not create vulnerability patterns root directory: %s", tmp);
+    }
+    ck_free(tmp);
+    
+    tmp = alloc_printf("./vuln_patterns/%s", protocol_name);
+    if (mkdir(tmp, 0700) && errno != EEXIST) {
+      WARNF("Could not create vulnerability patterns directory for %s: %s", protocol_name, tmp);
+    }
+    ck_free(tmp);
+  }
 
   /* All output from the LLM's help for unblocking the state stall -- for debugging purposes.  */
   tmp = alloc_printf("%s/stall-interactions", out_dir);

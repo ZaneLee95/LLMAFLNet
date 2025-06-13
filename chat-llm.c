@@ -1089,6 +1089,8 @@ char *enrich_sequence_with_vuln_pattern(char *sequence, const char* message_type
 }
 
 // 实现漏洞模板相关函数
+extern u8* out_dir;  // 输出目录的外部引用
+
 void get_vulnerability_driven_seeds(const char* in_dir, vulnerability_t* templates, int template_count) {
     if (!in_dir) return;
     

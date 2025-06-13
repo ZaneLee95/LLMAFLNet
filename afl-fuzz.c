@@ -9874,7 +9874,7 @@ EXP_ST void setup_dirs_fds(void)
   
   /* 用于保存漏洞驱动的种子 */
   tmp = alloc_printf("%s/vulnerability-seeds", out_dir);
-  if (mkdir(tmp, 0700))
+  if (mkdir(tmp, 0700) && errno != EEXIST)
     PFATAL("Unable to create '%s'", tmp);
   ck_free(tmp);
 

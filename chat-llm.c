@@ -774,27 +774,13 @@ char *unescape_string(const char *input)
     return output;
 }
 
-// 导入函数声明头文件
-#include <sys/stat.h>
-#include <errno.h>
-
-// 声明外部函数
-extern int create_directory_recursive(const char *path);
-
 void write_new_seeds(char *enriched_file, char *contents)
 {
-    // 确保目标目录存在
-    char *last_slash = strrchr(enriched_file, '/');
-    if (last_slash) {
-        *last_slash = '\0';
-        create_directory_recursive(enriched_file);
-        *last_slash = '/';
-    }
 
     FILE *fp = fopen(enriched_file, "w");
     if (fp == NULL)
     {
-        printf("Error in opening the file %s (errno: %d)\n", enriched_file, errno);
+        printf("Error in opening the file %s\n", enriched_file);
         exit(1);
     }
 
@@ -1183,15 +1169,7 @@ void get_vulnerability_driven_seeds(const char* in_dir, vulnerability_t* templat
                             char* enriched_file_name;
                             asprintf(&enriched_file_name, "enriched_vuln_%s_%s", token, de->d_name);
                             
-                            char* enriched_file_path = alloc_printf("%s/%s", in_dir, enriched_file_name);
-                            
-                            // 确保目标目录存在
-                            char* last_slash = strrchr(enriched_file_path, '/');
-                            if (last_slash) {
-                                *last_slash = '\0';
-                                create_directory_recursive(enriched_file_path);
-                                *last_slash = '/';
-                            }
+                            char* enriched_file_path = alloc_printf("%s/vulnerability-seeds/%s", out_dir, enriched_file_name);
                             
                             // 写入新种子
                             FILE* out_f = fopen(enriched_file_path, "w");
@@ -1200,7 +1178,7 @@ void get_vulnerability_driven_seeds(const char* in_dir, vulnerability_t* templat
                                 fclose(out_f);
                                 ACTF("Created vulnerability-driven seed: %s", enriched_file_name);
                             } else {
-                                WARNF("Failed to write enriched seed: %s (errno: %d)", enriched_file_path, errno);
+                                WARNF("Failed to write enriched seed: %s", enriched_file_path);
                             }
                             
                             free(enriched_file_name);

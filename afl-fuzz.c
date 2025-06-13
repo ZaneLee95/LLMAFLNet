@@ -9845,9 +9845,17 @@ EXP_ST void setup_dirs_fds(void)
   /* All output from the LLM and resulting grammars -- for debugging purposes. */
 
   tmp = alloc_printf("%s/protocol-grammars", out_dir);
-  if (mkdir(tmp, 0700) && errno != EEXIST)
+  if (mkdir(tmp, 0700))
     PFATAL("Unable to create '%s'", tmp);
   ck_free(tmp);
+  
+  /* 子目录用于存放LLM生成的语法 */
+  for (int i = 0; i < 10; i++) {
+    tmp = alloc_printf("%s/protocol-grammars/llm-grammar-output-%d", out_dir, i);
+    if (mkdir(tmp, 0700) && errno != EEXIST)
+      WARNF("Could not create LLM grammar output directory: %s", tmp);
+    ck_free(tmp);
+  }
   
   /* 确保漏洞模式目录存在 */
   if (protocol_name) {
@@ -9863,6 +9871,12 @@ EXP_ST void setup_dirs_fds(void)
     }
     ck_free(tmp);
   }
+  
+  /* 用于保存漏洞驱动的种子 */
+  tmp = alloc_printf("%s/vulnerability-seeds", out_dir);
+  if (mkdir(tmp, 0700))
+    PFATAL("Unable to create '%s'", tmp);
+  ck_free(tmp);
 
   /* All output from the LLM's help for unblocking the state stall -- for debugging purposes.  */
   tmp = alloc_printf("%s/stall-interactions", out_dir);

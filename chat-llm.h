@@ -143,6 +143,10 @@ message_set_list message_combinations(khash_t(strSet)* sequence, int size);
 int validate_generated_testcase(char *testcase, const char *protocol);
 void get_vulnerability_driven_seeds(const char *in_dir, vulnerability_t *templates, int template_count);
 
+// 添加漏洞模板初始化和释放的函数声明
+void init_vulnerability_templates(vulnerability_t *templates, int *template_count);
+void free_vulnerability_templates(vulnerability_t *templates, int template_count);
+
 // 更新函数声明，使用 char** 而不是 const char**
 void make_combination(khash_t(strSet)* sequence, char** data, message_set_list* res, khiter_t st, khiter_t end, int index, int size);
 

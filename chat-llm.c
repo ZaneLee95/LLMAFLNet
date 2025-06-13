@@ -1293,3 +1293,109 @@ int validate_generated_testcase(char *testcase, const char *protocol) {
     
     return 1; // 验证通过
 }
+
+// 初始化漏洞模板函数
+void init_vulnerability_templates(vulnerability_t *templates, int *template_count) {
+    if (!templates || !template_count) return;
+    
+    *template_count = 0; // 初始化计数器
+    
+    // 为不同协议添加预定义的漏洞模板
+    // 这里可以根据需要添加更多模板
+    
+    // RTSP协议漏洞模板
+    if (protocol_name && strcasecmp(protocol_name, "RTSP") == 0) {
+        // CVE-2019-7714: LiveStream Media Server RTSP Range字段缓冲区溢出
+        templates[*template_count].name = ck_strdup("CVE-2019-7714");
+        templates[*template_count].description = ck_strdup("LiveStream Media Server RTSP Range字段缓冲区溢出");
+        templates[*template_count].pattern = ck_strdup("Range: npt=0-\\[长字符串超过1024字节\\]");
+        templates[*template_count].applicable_message_types = ck_strdup("PLAY,SETUP");
+        (*template_count)++;
+        
+        // CVE-2020-24927: Gstreamer RTSP会话ID处理不当
+        templates[*template_count].name = ck_strdup("CVE-2020-24927");
+        templates[*template_count].description = ck_strdup("Gstreamer RTSP会话ID处理不当导致拒绝服务");
+        templates[*template_count].pattern = ck_strdup("Session: \\[非常长或特殊的会话ID\\]");
+        templates[*template_count].applicable_message_types = ck_strdup("PLAY,PAUSE,TEARDOWN");
+        (*template_count)++;
+    }
+    // FTP协议漏洞模板
+    else if (protocol_name && strcasecmp(protocol_name, "FTP") == 0) {
+        // CVE-2019-5418: ProFTPD模块mod_copy命令注入
+        templates[*template_count].name = ck_strdup("CVE-2019-5418");
+        templates[*template_count].description = ck_strdup("ProFTPD模块mod_copy SITE CPFR/CPTO命令注入");
+        templates[*template_count].pattern = ck_strdup("SITE CPFR /../../../etc/passwd\\r\\n");
+        templates[*template_count].applicable_message_types = ck_strdup("SITE");
+        (*template_count)++;
+        
+        // CVE-2020-9272: VSFTPD目录遍历
+        templates[*template_count].name = ck_strdup("CVE-2020-9272");
+        templates[*template_count].description = ck_strdup("VSFTPD中的目录遍历漏洞");
+        templates[*template_count].pattern = ck_strdup("CWD ../../../../../../../etc\\r\\n");
+        templates[*template_count].applicable_message_types = ck_strdup("CWD");
+        (*template_count)++;
+    }
+    // HTTP协议漏洞模板
+    else if (protocol_name && strcasecmp(protocol_name, "HTTP") == 0) {
+        // CVE-2019-0211: Apache HTTP Server中的本地权限提升
+        templates[*template_count].name = ck_strdup("CVE-2019-0211");
+        templates[*template_count].description = ck_strdup("Apache HTTP Server中的本地权限提升漏洞");
+        templates[*template_count].pattern = ck_strdup("GET /.htaccess HTTP/1.1\\r\\nHost: \\[目标主机\\]\\r\\n\\r\\n");
+        templates[*template_count].applicable_message_types = ck_strdup("GET");
+        (*template_count)++;
+        
+        // CVE-2020-13937: Apache Kylin RCE
+        templates[*template_count].name = ck_strdup("CVE-2020-13937");
+        templates[*template_count].description = ck_strdup("Apache Kylin未授权配置泄露导致RCE");
+        templates[*template_count].pattern = ck_strdup("GET /kylin/api/admin/config HTTP/1.1\\r\\nHost: \\[目标主机\\]\\r\\n\\r\\n");
+        templates[*template_count].applicable_message_types = ck_strdup("GET");
+        (*template_count)++;
+    }
+    // SMTP协议漏洞模板
+    else if (protocol_name && strcasecmp(protocol_name, "SMTP") == 0) {
+        // CVE-2019-10149: Exim 4.87 - 4.91远程命令执行
+        templates[*template_count].name = ck_strdup("CVE-2019-10149");
+        templates[*template_count].description = ck_strdup("Exim 4.87 - 4.91中的远程命令执行漏洞");
+        templates[*template_count].pattern = ck_strdup("MAIL FROM:<${run{\\[命令\\]}}@localhost>");
+        templates[*template_count].applicable_message_types = ck_strdup("MAIL FROM");
+        (*template_count)++;
+    }
+    
+    // 如果没有为当前协议定义模板，则尝试使用一些通用模板
+    if (*template_count == 0) {
+        templates[*template_count].name = ck_strdup("GENERIC-BOF");
+        templates[*template_count].description = ck_strdup("通用缓冲区溢出测试");
+        templates[*template_count].pattern = ck_strdup("\\[包含超长字符串(1024+字节)的字段\\]");
+        templates[*template_count].applicable_message_types = ck_strdup("*"); // 适用于任何消息类型
+        (*template_count)++;
+        
+        templates[*template_count].name = ck_strdup("GENERIC-FMT");
+        templates[*template_count].description = ck_strdup("通用格式化字符串测试");
+        templates[*template_count].pattern = ck_strdup("\\[包含%s%p%n等格式化字符的字段\\]");
+        templates[*template_count].applicable_message_types = ck_strdup("*"); // 适用于任何消息类型
+        (*template_count)++;
+    }
+    
+    if (*template_count > 0) {
+        ACTF("Initialized %d vulnerability templates for protocol: %s", *template_count, protocol_name ? protocol_name : "GENERIC");
+    } else {
+        WARNF("No vulnerability templates were initialized");
+    }
+}
+
+// 释放漏洞模板函数
+void free_vulnerability_templates(vulnerability_t *templates, int template_count) {
+    if (!templates || template_count <= 0) return;
+    
+    for (int i = 0; i < template_count; i++) {
+        if (templates[i].name) ck_free(templates[i].name);
+        if (templates[i].description) ck_free(templates[i].description);
+        if (templates[i].pattern) ck_free(templates[i].pattern);
+        if (templates[i].applicable_message_types) ck_free(templates[i].applicable_message_types);
+    }
+    
+    // 清零结构体（可选）
+    memset(templates, 0, sizeof(vulnerability_t) * template_count);
+    
+    ACTF("Freed %d vulnerability templates", template_count);
+}

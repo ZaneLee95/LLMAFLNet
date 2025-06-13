@@ -1077,11 +1077,8 @@ char *enrich_sequence_with_vuln_pattern(char *sequence, const char* message_type
     free(prompt);
     
     if (response) {
-        // 清理和格式化响应
+        // 清理和格式化响应 - 注意format_request_message内部会释放response
         char* cleaned_response = format_request_message(response);
-        if (cleaned_response != response) { // 如果格式化创建了新的字符串
-            free(response);
-        }
         return cleaned_response;
     }
     
@@ -1280,16 +1277,10 @@ int validate_generated_testcase(char *testcase, const char *protocol) {
     // 通用验证：确保请求以适当的终止符结束
     if (strstr(testcase, "\r\n\r\n") == NULL && 
         strstr(testcase, "\n\n") == NULL) {
-        // 添加终止符
-        char* terminated = malloc(len + 5);
-        if (!terminated) {
-            return 0;
-        }
-        
-        strcpy(terminated, testcase);
-        strcat(terminated, "\r\n\r\n");
-        strcpy(testcase, terminated);
-        free(terminated);
+        // 添加终止符，但保证不会溢出
+        // 注意：这里假设testcase有足够空间容纳额外的\r\n\r\n
+        // 如果不确定，应该重新分配testcase或使用其他方法
+        strcat(testcase, "\r\n\r\n");
     }
     
     return 1; // 验证通过

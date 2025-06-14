@@ -65,13 +65,56 @@ char *chat_with_llm(char *prompt, char *model, int tries, float temperature)
     char *accept_header = "Accept: application/json";
     char *data = NULL;
     
-    if (strcmp(model, "instruct") == 0)
-    {
-        asprintf(&data, "{\"model\": \"gpt-3.5-turbo-instruct\", \"prompt\": \"%s\", \"max_tokens\": %d, \"temperature\": %f}", prompt, MAX_TOKENS, temperature);
+    // 使用json-c库正确构建JSON请求
+    json_object *json_req = json_object_new_object();
+    
+    // 添加公共字段
+    json_object_object_add(json_req, "max_tokens", json_object_new_int(MAX_TOKENS));
+    json_object_object_add(json_req, "temperature", json_object_new_double(temperature));
+    
+    if (strcmp(model, "instruct") == 0) {
+        // 指令模式
+        json_object_object_add(json_req, "model", json_object_new_string("gpt-3.5-turbo-instruct"));
+        json_object_object_add(json_req, "prompt", json_object_new_string(prompt));
+    } else {
+        // 聊天模式
+        json_object_object_add(json_req, "model", json_object_new_string("gpt-3.5-turbo"));
+        
+        // 对于聊天模式，prompt应该已经是JSON格式的消息数组
+        // 但为了安全，我们检查它是否已经是有效的JSON
+        json_object *messages = NULL;
+        if (prompt[0] == '[') {
+            // 看起来像是JSON数组，尝试解析
+            messages = json_tokener_parse(prompt);
+        }
+        
+        if (messages && json_object_get_type(messages) == json_type_array) {
+            // 成功解析为数组，直接添加
+            json_object_object_add(json_req, "messages", messages);
+        } else {
+            // 如果不是有效的JSON数组，创建一个简单的消息
+            if (messages) json_object_put(messages); // 释放之前尝试解析的结果
+            
+            json_object *msg_array = json_object_new_array();
+            json_object *user_msg = json_object_new_object();
+            
+            json_object_object_add(user_msg, "role", json_object_new_string("user"));
+            json_object_object_add(user_msg, "content", json_object_new_string(prompt));
+            
+            json_object_array_add(msg_array, user_msg);
+            json_object_object_add(json_req, "messages", msg_array);
+        }
     }
-    else
-    {
-        asprintf(&data, "{\"model\": \"gpt-3.5-turbo\",\"messages\": %s, \"max_tokens\": %d, \"temperature\": %f}", prompt, MAX_TOKENS, temperature);
+    
+    // 获取最终的JSON字符串
+    data = strdup(json_object_to_json_string(json_req));
+    
+    // 释放JSON对象
+    json_object_put(json_req);
+    
+    if (!data) {
+        WARNF("Failed to create JSON request data");
+        return NULL;
     }
     
     curl_global_init(CURL_GLOBAL_DEFAULT);

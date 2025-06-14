@@ -1078,3 +1078,77 @@ char *enrich_sequence(char *sequence, khash_t(strSet) *missing_message_types)
 
     return response;
 }
+
+/* 
+ * 实现基于漏洞模式的序列富集函数
+ * 这个函数在afl-fuzz.c中被调用，但原来缺少实现
+ */
+char *enrich_sequence_with_vuln_pattern(char *sequence, const char *message_type, vuln_pattern_t *pattern)
+{
+    if (!sequence || !message_type || !pattern || !pattern->pattern) return NULL;
+
+    // 构造提示词
+    char *prompt = construct_prompt_for_vuln_enrichment(sequence, message_type, pattern);
+    if (!prompt) return NULL;
+
+    // 调用LLM生成富集结果
+    char *response = chat_with_llm(prompt, "turbo", ENRICHMENT_RETRIES, 0.7);
+    free(prompt);
+
+    // 记录结果
+    if (response) {
+        OKF("Successfully enriched sequence with %s vulnerability pattern", 
+             pattern->name ? pattern->name : "unknown");
+    } else {
+        WARNF("Failed to enrich sequence with vulnerability pattern");
+    }
+
+    return response;
+}
+
+/*
+ * 实现测试用例验证函数
+ * 这个函数在afl-fuzz.c中被调用，但原来缺少实现
+ */
+int validate_generated_testcase(char *testcase, const char *protocol)
+{
+    if (!testcase || !protocol) return 0;
+    
+    // 基本检查
+    size_t len = strlen(testcase);
+    
+    // 1. 检查是否为空
+    if (len < 10) {
+        WARNF("Generated testcase too short (%zu bytes)", len);
+        return 0;
+    }
+    
+    // 2. 检查文本协议的行结束符
+    if (strcasecmp(protocol, "http") == 0 || 
+        strcasecmp(protocol, "smtp") == 0 || 
+        strcasecmp(protocol, "rtsp") == 0 || 
+        strcasecmp(protocol, "ftp") == 0 ||
+        strcasecmp(protocol, "sip") == 0) {
+        
+        // 至少应该有一个CRLF
+        if (strstr(testcase, "\r\n") == NULL) {
+            WARNF("Generated %s testcase missing proper CRLF line endings", protocol);
+            return 0;
+        }
+        
+        // 协议特定检查
+        if (strcasecmp(protocol, "http") == 0 && 
+            (!strstr(testcase, "HTTP/") && !strstr(testcase, "GET ") && 
+             !strstr(testcase, "POST ") && !strstr(testcase, "PUT "))) {
+            WARNF("Generated HTTP testcase missing basic HTTP method or version");
+            return 0;
+        }
+        else if (strcasecmp(protocol, "rtsp") == 0 && !strstr(testcase, "RTSP/")) {
+            WARNF("Generated RTSP testcase missing RTSP version");
+            return 0;
+        }
+    }
+    
+    // 通过基本验证
+    return 1;
+}

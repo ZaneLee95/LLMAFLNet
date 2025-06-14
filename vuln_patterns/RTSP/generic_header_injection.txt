@@ -1,4 +1,0 @@
-# Description: CRLF injection in a header value to inject a malicious header, potentially causing request smuggling or cache poisoning.
-# Target Messages: DESCRIBE,SETUP,PLAY
-# Pattern:
-User-Agent: normal-agent\r\nMalicious-Header: InjectedValue

@@ -1,5 +1,0 @@
-# Description: Path traversal to read sensitive system files.
-# Target Messages: GET
-# Pattern:
-GET /../../../../../../../../etc/passwd HTTP/1.1
-Host: 127.0.0.1

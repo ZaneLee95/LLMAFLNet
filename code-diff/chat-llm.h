@@ -39,20 +39,6 @@ Similarly 1700 is for the example request in the seed enrichment
 // Maximum number of messages to examine for addition
 #define MAX_ENRICHMENT_CORPUS_SIZE 10
 
-// 漏洞驱动用例生成的重试次数
-#define VUL_ENRICHMENT_RETRIES 3
-
-// 每个协议最大漏洞模板数量
-#define MAX_VUL_TEMPLATES 50
-
-// 历史漏洞描述结构体
-typedef struct vulnerability_template {
-    char* name;
-    char* description;
-    char* pattern;
-    char* applicable_message_types;
-} vulnerability_t;
-
 #define PCRE2_CODE_UNIT_WIDTH 8 // Characters are 8 bits
 #include <pcre2.h>
 
@@ -70,42 +56,13 @@ typedef struct
     int mutable;
 } range;
 
-// 使用单一结构体表示漏洞模式
-typedef struct {
-    char* name;             // 漏洞名称
-    char* description;      // 描述
-    char* target_messages;  // 目标消息类型
-    char* pattern;          // 漏洞模式
-} vuln_pattern_t;
-
 typedef kvec_t(range) range_list;
 typedef kvec_t(khash_t(strSet)*) message_set_list;
 
-// 定义漏洞模式的 klist 结构体
-#define __vuln_pattern_t_free(x) do { \
-    if ((x)->data) { \
-        free(((x)->data)->description); \
-        free(((x)->data)->target_messages); \
-        free(((x)->data)->pattern); \
-        free((x)->data); \
-    } \
-} while(0)
-KLIST_INIT(vuln_patterns, vuln_pattern_t*, __vuln_pattern_t_free);
-
-// 定义一个 map 结构体，保存 {key: string, value: int} 的键值对
+// define one map to save pairs: {key: string, value: int}
 KHASH_MAP_INIT_STR(strMap, int)
 KHASH_MAP_INIT_STR(field_table, int);
 KHASH_INIT(consistency_table, const char *, khash_t(field_table) *, 1, kh_str_hash_func, kh_str_hash_equal);
-
-// 定义一个 map 结构体，保存 {key: 协议名称（字符串），value: 列表漏洞模式} 的键值对
-KHASH_MAP_INIT_STR(vuln_map, klist_t(vuln_patterns)*);
-
-// 声明外部变量
-extern char* protocol_name;
-extern khash_t(vuln_map)* vuln_patterns_map;
-
-// 用于构建漏洞感知提示的新函数原型
-char* construct_prompt_for_vuln_enrichment(const char* sequence, const char* message_type_to_add, vuln_pattern_t* pattern);
 
 char *chat_with_llm(char *prompt, char *model, int tries, float temperature);
 char *construct_prompt_for_templates(char *protocol_name, char **final_msg);
@@ -128,32 +85,10 @@ range_list starts_with(char *line, int length, pcre2_code *pattern);
 range_list get_mutable_ranges(char *line, int length, int offset, pcre2_code *pattern);
 void get_protocol_message_types(char *state_prompt, khash_t(strSet) * message_types);
 
-char *enrich_sequence(char *sequence, khash_t(strSet) *missing_message_types);
-char *enrich_sequence_with_vuln_pattern(char *sequence, const char *message_type, vuln_pattern_t *pattern);
-
+char *enrich_sequence(char* sequence, khash_t(strSet) *missing_message_types);
 khash_t(strSet)* duplicate_hash(khash_t(strSet)* set);
 void write_new_seeds(char *enriched_file, char *contents);
 char *unescape_string(const char *input);
 char *format_string(char *state_string);
 message_set_list message_combinations(khash_t(strSet)* sequence, int size);
-
-// 漏洞驱动用例富集相关函数
-int validate_generated_testcase(char *testcase, const char *protocol);
-void get_vulnerability_driven_seeds(const char *in_dir, const char *out_dir, vulnerability_t *templates, int template_count);
-
-// 添加漏洞模板初始化和释放的函数声明
-void init_vulnerability_templates(vulnerability_t *templates, int *template_count);
-void free_vulnerability_templates(vulnerability_t *templates, int template_count);
-
-// 更新函数声明，使用 char** 而不是 const char**
-void make_combination(khash_t(strSet)* sequence, char** data, message_set_list* res, khiter_t st, khiter_t end, int index, int size);
-
-// 添加最大模式大小常量
-#define MAX_PATTERN_SIZE (64 * 1024)  // 64KB 应该足够大
-
-/* Additional helper constants required by recent implementation */
-#define MAX_LINE 1024           /* Max length when reading a single line from template / pattern files */
-#define MAX_TOKENS 2048         /* Hard limit of tokens in a single LLM prompt (GPT-3.5/4 context) */
-#define CONFIDENT_TIMES 3       /* Times we query the LLM for self-consistency */
-
 #endif // __CHAT_LLM_H

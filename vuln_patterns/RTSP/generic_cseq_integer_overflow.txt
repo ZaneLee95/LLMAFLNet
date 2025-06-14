@@ -1,4 +1,0 @@
-# Description: Integer overflow or signedness bug in the 'CSeq' (sequence number) header.
-# Target Messages: DESCRIBE,SETUP,PLAY,TEARDOWN,OPTIONS,ANNOUNCE,RECORD,PAUSE,GET_PARAMETER,SET_PARAMETER
-# Pattern:
-CSeq: -1

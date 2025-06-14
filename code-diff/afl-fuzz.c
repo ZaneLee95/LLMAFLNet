@@ -411,9 +411,6 @@ klist_t(lms) * kl_messages;
 khash_t(hs32) * khs_ipsm_paths;
 khash_t(hms) * khms_states;
 
-// Global hash map to store vulnerability patterns, keyed by protocol name
-khash_t(vuln_map)* vuln_patterns_map;
-
 // M2_prev points to the last message of M1 (i.e., prefix)
 // If M1 is empty, M2_prev == NULL
 // M2_next points to the first message of M3 (i.e., suffix)
@@ -434,130 +431,6 @@ char *protocol_name;
 u32 reward_random;
 u32 reward_grammar;
 
-void load_vulnerability_patterns(const char* protocol_name) {
-    if (!protocol_name) return;
-    
-    char pattern_dir_path[PATH_MAX];
-    snprintf(pattern_dir_path, sizeof(pattern_dir_path), "./vuln_patterns/%s", protocol_name);
-    
-    DIR* d = opendir(pattern_dir_path);
-
-    ACTF("Loading vulnerability patterns for %s...", protocol_name);
-
-    klist_t(vuln_patterns)* patterns_list = kl_init(vuln_patterns);
-    if (!patterns_list) {
-        WARNF("Failed to initialize patterns list");
-        closedir(d);
-        return;
-    }
-    
-    struct dirent* de;
-    while ((de = readdir(d))) {
-        if (de->d_name[0] == '.' || !strstr(de->d_name, ".txt")) continue;
-
-        char file_path[PATH_MAX];
-        snprintf(file_path, sizeof(file_path), "%s/%s", pattern_dir_path, de->d_name);
-        
-        FILE* f = fopen(file_path, "r");
-        if (!f) {
-            WARNF("Could not open pattern file: %s", file_path);
-            continue;
-        }
-
-        vuln_pattern_t* p = ck_alloc(sizeof(vuln_pattern_t));
-        if (!p) {
-            WARNF("Failed to allocate memory for pattern");
-            fclose(f);
-            continue;
-        }
-        
-        p->description = NULL;
-        p->target_messages = NULL;
-        p->pattern = NULL;
-        
-        char line[MAX_LINE];
-        char* current_pattern_buffer = NULL;
-        size_t pattern_size = 0;
-        int in_pattern_section = 0;
-        
-        while (fgets(line, sizeof(line), f)) {
-            size_t line_len = strlen(line);
-            
-            // 移除行尾的换行符
-            if (line_len > 0 && (line[line_len-1] == '\n' || line[line_len-1] == '\r')) {
-                line[--line_len] = '\0';
-                if (line_len > 0 && line[line_len-1] == '\r')
-                    line[--line_len] = '\0';
-            }
-            
-            if (strncmp(line, "DESCRIPTION:", 12) == 0) {
-                p->description = ck_strdup(line + 12);
-                while (isspace(*p->description)) p->description++;
-            } 
-            else if (strncmp(line, "TARGET_MESSAGES:", 16) == 0) {
-                p->target_messages = ck_strdup(line + 16);
-                while (isspace(*p->target_messages)) p->target_messages++;
-            }
-            else if (strncmp(line, "PATTERN:", 8) == 0) {
-                in_pattern_section = 1;
-                current_pattern_buffer = ck_alloc(MAX_PATTERN_SIZE);
-                if (!current_pattern_buffer) {
-                    WARNF("Failed to allocate memory for pattern buffer");
-                    break;
-                }
-                current_pattern_buffer[0] = '\0';
-            }
-            else if (in_pattern_section) {
-                if (pattern_size + line_len + 2 >= MAX_PATTERN_SIZE) {
-                    WARNF("Pattern too large in file: %s", file_path);
-                    break;
-                }
-                
-                if (pattern_size > 0) {
-                    current_pattern_buffer[pattern_size++] = '\n';
-                    current_pattern_buffer[pattern_size] = '\0';
-                }
-                
-                memcpy(current_pattern_buffer + pattern_size, line, line_len);
-                pattern_size += line_len;
-                current_pattern_buffer[pattern_size] = '\0';
-            }
-        }
-        
-        if (current_pattern_buffer) {
-            p->pattern = current_pattern_buffer;
-        }
-
-        if (p->target_messages && p->pattern) {
-            *kl_pushp(vuln_patterns, patterns_list) = p;
-            ACTF("Loaded pattern: %s", p->description ? p->description : "(unnamed)");
-        } else {
-            ck_free(p->description);
-            ck_free(p->target_messages);
-            ck_free(p->pattern);
-            ck_free(p);
-        }
-
-        fclose(f);
-    }
-    closedir(d);
-
-    if (patterns_list->size > 0) {
-        int ret;
-        khiter_t k = kh_put(vuln_map, vuln_patterns_map, protocol_name, &ret);
-        if (ret != -1) {
-            kh_value(vuln_patterns_map, k) = patterns_list;
-            OKF("Loaded %zu vulnerability patterns for %s.", patterns_list->size, protocol_name);
-        } else {
-            WARNF("Failed to store patterns in hash map");
-            kl_destroy(vuln_patterns, patterns_list);
-        }
-    } else {
-        WARNF("No vulnerability patterns loaded for %s", protocol_name);
-        kl_destroy(vuln_patterns, patterns_list);
-    }
-}
-
 void setup_llm_grammars()
 {
 
@@ -575,7 +448,7 @@ void setup_llm_grammars()
     if (templates_answer == NULL)
       goto free_templates_answer;
 
-    // printf("##Answer from LLM:\n %s\n", templates_answer);
+    // printf("## Answer from LLM:\n %s\n", templates_answer);
     char *remaining_prompt = construct_prompt_for_remaining_templates(protocol_name, first_question, templates_answer);
     // printf("remaining prompt is:\n %s\n", remaining_prompt);
     char *remaining_templates = chat_with_llm(remaining_prompt, "turbo", GRAMMAR_RETRIES, 0.5);
@@ -587,7 +460,7 @@ void setup_llm_grammars()
     char *combined_templates = NULL;
     asprintf(&combined_templates, "%s\n%s", templates_answer, remaining_templates);
 
-    char *grammar_output_path = alloc_printf("%s/protocol-grammars/llm-grammar-output-%d", out_dir, iter); 
+    char *grammar_output_path = alloc_printf("%s/protocol-grammars/llm-grammar-output-%d", out_dir, iter);
     int grammar_output_fd = open(grammar_output_path, O_WRONLY | O_CREAT, 0600);
 
     ck_write(grammar_output_fd, combined_templates, strlen(combined_templates), grammar_output_path);
@@ -2832,113 +2705,63 @@ void get_seeds_with_messsage_types(const char *in_dir, khash_t(strSet) * message
       continue;
     }
 
-    // 1. Try to enrich using vulnerability patterns first
-    khiter_t k_map = kh_get(vuln_map, vuln_patterns_map, protocol_name);
-    if (k_map != kh_end(vuln_patterns_map)) {
-        klist_t(vuln_patterns)* patterns = kh_value(vuln_patterns_map, k_map);
-        kliter_t(vuln_patterns)* it;
+    while(kh_size(messages) > MAX_ENRICHMENT_CORPUS_SIZE) 
+    {
+      khiter_t x =UR(kh_end(messages));
+      if (kh_exist(messages, x))
+      {
+        kh_del(strSet, messages, x);
+      }
+    }
 
-        for (it = kl_begin(patterns); it != kl_end(patterns); it = kl_next(it)) {
-            vuln_pattern_t* p = kl_val(it);
-            
-            // Check if this pattern's target messages are in our missing set
-            char* targets_copy = ck_strdup(p->target_messages);
-            char* token = strtok(targets_copy, ",");
-            while (token) {
-                khiter_t k_msg = kh_get(strSet, messages, token);
-                if (kh_exist(messages, k_msg)) {
-                    // Found a missing message type that matches a vuln pattern!
-                    ACTF("Found vuln pattern for missing message type '%s'. Enriching seed '%s'.", token, nl_file_name);
-                    
-                    // Call the new enrichment function
-                    char* client_request_answer = enrich_sequence_with_vuln_pattern(nl_file_content, token, p);
+    message_set_list message_subsets = message_combinations(messages,MAX_ENRICHMENT_MESSAGE_TYPES);
 
-                    if (client_request_answer) {
-                        // (The rest is similar to original code: check for empty/same response, format, write new seed)
-                        char *formatted_nl_file_content = format_string(nl_file_content);
-                        char *unescaped_client_requests = unescape_string(client_request_answer);
-                        char *formatted_unescaped_client_requests = format_string(unescaped_client_requests);
-                        
-                        if (formatted_unescaped_client_requests && strcmp(formatted_unescaped_client_requests, formatted_nl_file_content) != 0)
-                        {
-                            // 验证富集后的测试用例
-                            if (validate_generated_testcase(unescaped_client_requests, protocol_name))
-                            {
-                                // format_request_message 不再释放输入指针
-                                char *formatted_requests = format_request_message(unescaped_client_requests);
-                                free(unescaped_client_requests);
-                                
-                                char *enriched_file_name;
-                                asprintf(&enriched_file_name, "enriched_vuln_%s_%s", token, nl_file_name);
-                                char *enriched_file_path = alloc_printf("%s/%s", in_dir, enriched_file_name);
-                                
-                                write_new_seeds(enriched_file_path, formatted_requests);
-                                
-                                free(enriched_file_name);
-                                ck_free(enriched_file_path);
-                                free(formatted_requests);
-                            }
-                            else
-                            {
-                                WARNF("Vulnerability-enriched testcase failed validation, skipping");
-                                free(unescaped_client_requests);
-                            }
-                        }
-                        else
-                        {
-                            free(unescaped_client_requests);
-                        }
-                        free(client_request_answer);
-                    }
-                    
-                    // Remove this message type from the missing set so we don't enrich it again
-                    kh_del(strSet, messages, k_msg);
-                }
-                token = strtok(NULL, ",");
-            }
-            ck_free(targets_copy);
+    for(int i = 0;i < kv_size(message_subsets);i++) {
+
+      khash_t(strSet)* subset = kv_A(message_subsets,i); 
+
+      // Try enriching the sequence
+        char *client_request_answer = enrich_sequence(nl_file_content, subset);
+
+        if (client_request_answer == NULL)
+          continue;
+
+        // Check whether the client_request_answer is the same as the nl_file_content or if the client_request_answer is empty
+        char *formatted_nl_file_content = format_string(nl_file_content);
+        char *unescaped_client_requests = unescape_string(client_request_answer);
+        char *formatted_unescaped_client_requests = format_string(unescaped_client_requests);
+        // printf("## Formatted answer from LLM:\n %s\n", formatted_unescaped_client_requests);
+        // printf("## Formatted file content:\n %s\n", formatted_nl_file_content);
+        if (formatted_unescaped_client_requests == NULL || strcmp(formatted_unescaped_client_requests, formatted_nl_file_content) == 0)
+        {
+          printf("## Skip the same seed\n");
+          continue;
         }
+
+        unescaped_client_requests = format_request_message(unescaped_client_requests);
+
+        // Create the file in the same directory with the name enriched_state_<file_name>
+        char *enriched_file_name = malloc(strlen(nl_file_name) + 10 + 20);
+        strcpy(enriched_file_name, "enriched_");
+        sprintf(enriched_file_name+9,"%d_",i);
+        strcat(enriched_file_name, nl_file_name);
+        char *enriched_file_path = malloc(strlen(in_dir) + strlen(enriched_file_name) + 2);
+        strcpy(enriched_file_path, in_dir);
+        strcat(enriched_file_path, "/");
+        strcat(enriched_file_path, enriched_file_name);
+        
+        // printf("## Enriched file path: %s\n", enriched_file_path);
+
+        write_new_seeds(enriched_file_path, unescaped_client_requests);
+
+        free(enriched_file_name);
+        free(enriched_file_path);
     }
 
-    // 2. Fallback to generic enrichment for remaining missing message types
-    if (kh_size(messages) > 0) {
-        ACTF("Falling back to generic enrichment for %d remaining message types for seed '%s'.", kh_size(messages), nl_file_name);
-        
-        // The original logic with message_combinations can be called here
-        message_set_list message_subsets = message_combinations(messages, min(MAX_ENRICHMENT_MESSAGE_TYPES, kh_size(messages)));
-
-        for(int j = 0; j < kv_size(message_subsets); j++) {
-            khash_t(strSet)* subset = kv_A(message_subsets, j); 
-            char *client_request_answer = enrich_sequence(nl_file_content, subset);
-            
-            if (client_request_answer) {
-                    // 处理响应，例如格式化和写入新种子
-                    char *formatted_answer = format_request_message(client_request_answer);
-                    // 释放原始消息，因为format_request_message不再释放它
-                    free(client_request_answer);
-                    
-                    if (formatted_answer) {
-                        // 写入新种子
-                        char *enriched_file_name;
-                        asprintf(&enriched_file_name, "enriched_generic_%s_%d", nl_file_name, j);
-                        char *enriched_file_path = alloc_printf("%s/%s", in_dir, enriched_file_name);
-                        
-                        write_new_seeds(enriched_file_path, formatted_answer);
-                        
-                        free(enriched_file_name);
-                        ck_free(enriched_file_path);
-                        
-                        // formatted_answer是由ck_alloc分配的，使用ck_free释放
-                        ck_free(formatted_answer);
-                    }
-                } else {
-                    WARNF("Enriched testcase failed validation, skipping");
-                    free(client_request_answer);
-                }
-            }
-        
-        // ... (cleanup for message_subsets) ...
-    }
+    for(int i = 0;i < kv_size(message_subsets);i++) {
+      khash_t(strSet)* subset = kv_A(message_subsets,i);
+      kh_destroy(strSet,subset);
+    } 
 
     kh_destroy(strSet, messages);
   }
@@ -4573,32 +4396,32 @@ static void perform_dry_run(char **argv)
 static void link_or_copy(u8 *old_path, u8 *new_path)
 {
 
-    s32 i = link(old_path, new_path);
-    s32 sfd, dfd;
-    u8 *tmp;
+  s32 i = link(old_path, new_path);
+  s32 sfd, dfd;
+  u8 *tmp;
 
-    if (!i)
-        return;
+  if (!i)
+    return;
 
-    sfd = open(old_path, O_RDONLY);
-    if (sfd < 0)
-        PFATAL("Unable to open '%s'", old_path);
+  sfd = open(old_path, O_RDONLY);
+  if (sfd < 0)
+    PFATAL("Unable to open '%s'", old_path);
 
-    dfd = open(new_path, O_WRONLY | O_CREAT | O_EXCL, 0600);
-    if (dfd < 0)
-        PFATAL("Unable to create '%s'", new_path);
+  dfd = open(new_path, O_WRONLY | O_CREAT | O_EXCL, 0600);
+  if (dfd < 0)
+    PFATAL("Unable to create '%s'", new_path);
 
-    tmp = ck_alloc(64 * 1024);
+  tmp = ck_alloc(64 * 1024);
 
-    while ((i = read(sfd, tmp, 64 * 1024)) > 0)
-        ck_write(dfd, tmp, i, new_path);
+  while ((i = read(sfd, tmp, 64 * 1024)) > 0)
+    ck_write(dfd, tmp, i, new_path);
 
-    if (i < 0)
-        PFATAL("read() failed");
+  if (i < 0)
+    PFATAL("read() failed");
 
-    ck_free(tmp);
-    close(sfd);
-    close(dfd);
+  ck_free(tmp);
+  close(sfd);
+  close(dfd);
 }
 
 static void nuke_resume_dir(void);
@@ -5942,7 +5765,7 @@ static void show_stats(void)
 
   sprintf(tmp, "%0.02f%% / %0.02f%%", ((double)queue_cur->bitmap_size) * 100 / MAP_SIZE, t_byte_ratio);
 
-  SAYF(bSTOP "    map density : %s%-21s " bSTG bV "\n", t_byte_ratio > 70 ? cLRD : ((t_bytes < 200 && !dumb_mode) ? cPIN : cRST), tmp);
+  SAYF("    map density : %s%-21s " bSTG bV "\n", t_byte_ratio > 70 ? cLRD : ((t_bytes < 200 && !dumb_mode) ? cPIN : cRST), tmp);
 
   sprintf(tmp, "%s (%0.02f%%)", DI(cur_skipped_paths),
           ((double)cur_skipped_paths * 100) / queued_paths);
@@ -5983,7 +5806,7 @@ static void show_stats(void)
   sprintf(tmp, "%s (%0.02f%%)", DI(queued_with_cov),
           ((double)queued_with_cov) * 100 / queued_paths);
 
-  SAYF(bSTOP "  new edges on : " cRST "%-22s " bSTG bV "\n", tmp);
+  SAYF("  new edges on : " cRST "%-22s " bSTG bV "\n", tmp);
 
   sprintf(tmp, "%s (%s%s unique)", DI(total_crashes), DI(unique_crashes),
           (unique_crashes >= KEEP_UNIQUE_CRASH) ? "+" : "");
@@ -9249,6 +9072,10 @@ static void sync_fuzzers(char **argv)
         queued_imported += save_if_interesting(argv, mem, st.st_size, fault);
         syncing_party = 0;
 
+        /* AFLNet delete the kl_messages */
+        ck_free(regions);
+        delete_kl_messages(kl_messages);
+
         /* AFLNet: unset this flag to disable request extractions while adding new seed to the queue */
         corpus_read_or_sync = 0;
 
@@ -9685,14 +9512,6 @@ EXP_ST void setup_dirs_fds(void)
     PFATAL("Unable to create '%s'", tmp);
   ck_free(tmp);
 
-  /* Directory for flagging queue entries that went through
-     deterministic fuzzing in the past. */
-
-  tmp = alloc_printf("%s/queue/.state/deterministic_done/", out_dir);
-  if (mkdir(tmp, 0700))
-    PFATAL("Unable to create '%s'", tmp);
-  ck_free(tmp);
-
   /* Directory with the auto-selected dictionary entries. */
 
   tmp = alloc_printf("%s/queue/.state/auto_extras/", out_dir);
@@ -9752,35 +9571,6 @@ EXP_ST void setup_dirs_fds(void)
 
   tmp = alloc_printf("%s/protocol-grammars", out_dir);
   if (mkdir(tmp, 0700))
-    PFATAL("Unable to create '%s'", tmp);
-  ck_free(tmp);
-  
-  /* 子目录用于存放LLM生成的语法 */
-  for (int i = 0; i < 10; i++) {
-    tmp = alloc_printf("%s/protocol-grammars/llm-grammar-output-%d", out_dir, i);
-    if (mkdir(tmp, 0700) && errno != EEXIST)
-      WARNF("Could not create LLM grammar output directory: %s", tmp);
-    ck_free(tmp);
-  }
-  
-  /* 确保漏洞模式目录存在 */
-  if (protocol_name) {
-    tmp = alloc_printf("./vuln_patterns");
-    if (mkdir(tmp, 0700) && errno != EEXIST) {
-      WARNF("Could not create vulnerability patterns root directory: %s", tmp);
-    }
-    ck_free(tmp);
-    
-    tmp = alloc_printf("./vuln_patterns/%s", protocol_name);
-    if (mkdir(tmp, 0700) && errno != EEXIST) {
-      WARNF("Could not create vulnerability patterns directory for %s: %s", protocol_name, tmp);
-    }
-    ck_free(tmp);
-  }
-  
-  /* 用于保存漏洞驱动的种子 */
-  tmp = alloc_printf("%s/vulnerability-seeds", out_dir);
-  if (mkdir(tmp, 0700) && errno != EEXIST)
     PFATAL("Unable to create '%s'", tmp);
   ck_free(tmp);
 
@@ -10885,19 +10675,19 @@ int main(int argc, char **argv)
   init_count_class16();
 
   setup_ipsm();
-  setup_dirs_fds();          // 已创建输出目录
 
-  /* ---- 新增 ---- */
-  vuln_patterns_map = kh_init(vuln_map);
-  if (protocol_name) load_vulnerability_patterns(protocol_name);
-  /* -------------- */
+  setup_dirs_fds();
 
-  if (protocol_selected) {
-      protocol_patterns = kl_init(rang);
-      message_types_set = kh_init(strSet);
-      setup_llm_grammars();
-      enrich_testcases();
+  if (protocol_selected)
+  {
+    protocol_patterns = kl_init(rang);
+    message_types_set = kh_init(strSet);
+
+    setup_llm_grammars();
+    enrich_testcases();
   }
+  read_testcases();
+  load_auto();
 
   pivot_inputs();
 

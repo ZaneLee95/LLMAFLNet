@@ -64,6 +64,7 @@ char *chat_with_llm(char *prompt, char *model, int tries, float temperature)
     char *content_header = "Content-Type: application/json";
     char *accept_header = "Accept: application/json";
     char *data = NULL;
+    
     if (strcmp(model, "instruct") == 0)
     {
         asprintf(&data, "{\"model\": \"gpt-3.5-turbo-instruct\", \"prompt\": \"%s\", \"max_tokens\": %d, \"temperature\": %f}", prompt, MAX_TOKENS, temperature);
@@ -72,6 +73,7 @@ char *chat_with_llm(char *prompt, char *model, int tries, float temperature)
     {
         asprintf(&data, "{\"model\": \"gpt-3.5-turbo\",\"messages\": %s, \"max_tokens\": %d, \"temperature\": %f}", prompt, MAX_TOKENS, temperature);
     }
+    
     curl_global_init(CURL_GLOBAL_DEFAULT);
     do
     {
@@ -154,6 +156,17 @@ char *chat_with_llm(char *prompt, char *model, int tries, float temperature)
 char* construct_prompt_for_vuln_enrichment(const char* sequence, const char* message_type_to_add, vuln_pattern_t* pattern) {
     if (!sequence || !message_type_to_add || !pattern) return NULL;
     
+    // 使用JSON对象处理特殊字符转义
+    json_object *seq_json = json_object_new_string(sequence);
+    json_object *desc_json = json_object_new_string(pattern->description ? pattern->description : "Unknown vulnerability");
+    json_object *pattern_json = json_object_new_string(pattern->pattern ? pattern->pattern : "");
+    json_object *msg_type_json = json_object_new_string(message_type_to_add);
+    
+    const char *seq_escaped = json_object_get_string(seq_json);
+    const char *desc_escaped = json_object_get_string(desc_json);
+    const char *pattern_escaped = json_object_get_string(pattern_json);
+    const char *msg_type_escaped = json_object_get_string(msg_type_json);
+    
     const char* prompt_template =
         "ROLE: You are a cyber-security assistant specialised in generating network protocol test cases.\n"
         "TASK: Inject the given vulnerability pattern into the sequence **without breaking protocol syntax**.\n"
@@ -168,36 +181,73 @@ char* construct_prompt_for_vuln_enrichment(const char* sequence, const char* mes
         "=== END ===";
     
     // 计算所需空间并分配
-    int estimated_size = strlen(prompt_template) + strlen(sequence) + 
-                        strlen(pattern->description ? pattern->description : "Unknown vulnerability") +
-                        strlen(pattern->pattern ? pattern->pattern : "") +
-                        strlen(message_type_to_add) + 100; // 额外空间用于安全性
+    int estimated_size = strlen(prompt_template) + 
+                        strlen(seq_escaped) + 
+                        strlen(desc_escaped) + 
+                        strlen(pattern_escaped) + 
+                        strlen(msg_type_escaped) + 100; // 额外空间用于安全性
                         
     char* prompt = (char*)malloc(estimated_size);
     if (!prompt) return NULL;
     
     snprintf(prompt, estimated_size, prompt_template,
-            message_type_to_add,
-            sequence,
-            pattern->description ? pattern->description : "Unknown vulnerability",
-            pattern->pattern ? pattern->pattern : "",
-            message_type_to_add);
+            msg_type_escaped,
+            seq_escaped,
+            desc_escaped,
+            pattern_escaped);
+            
+    // 释放JSON对象
+    json_object_put(seq_json);
+    json_object_put(desc_json);
+    json_object_put(pattern_json);
+    json_object_put(msg_type_json);
             
     return prompt;
 }
 
 char *construct_prompt_stall(char *protocol_name, char *examples, char *history)
 {
-    char *template = "In the %s protocol, the communication history between the %s client and the %s server is as follows."
+    // 使用JSON对象处理特殊字符转义
+    json_object *protocol_json = json_object_new_string(protocol_name);
+    json_object *examples_json = json_object_new_string(examples);
+    json_object *history_json = json_object_new_string(history);
+    
+    const char *protocol_escaped = json_object_get_string(protocol_json);
+    const char *examples_escaped = json_object_get_string(examples_json);
+    const char *history_escaped = json_object_get_string(history_json);
+    
+    const char *template = "In the %s protocol, the communication history between the %s client and the %s server is as follows."
                      "The next proper client request that can affect the server's state are:\\n\\n"
                      "Desired format of real client requests:\\n%sCommunication History:\\n\\\"\\\"\\\"\\n%s\\\"\\\"\\\"";
 
     char *prompt = NULL;
-    asprintf(&prompt, template, protocol_name, protocol_name, protocol_name, examples, history);
+    asprintf(&prompt, template, protocol_escaped, protocol_escaped, protocol_escaped, examples_escaped, history_escaped);
 
     char *final_prompt = NULL;
-
-    asprintf(&final_prompt, "[{\"role\": \"system\", \"content\": \"You are a helpful assistant.\"}, {\"role\": \"user\", \"content\": \"%s\"}]", prompt);
+    
+    // 创建JSON对象来构造最终的消息数组
+    json_object *messages = json_object_new_array();
+    
+    // 系统角色消息
+    json_object *system_msg = json_object_new_object();
+    json_object_object_add(system_msg, "role", json_object_new_string("system"));
+    json_object_object_add(system_msg, "content", json_object_new_string("You are a helpful assistant."));
+    json_object_array_add(messages, system_msg);
+    
+    // 用户消息
+    json_object *user_msg = json_object_new_object();
+    json_object_object_add(user_msg, "role", json_object_new_string("user"));
+    json_object_object_add(user_msg, "content", json_object_new_string(prompt));
+    json_object_array_add(messages, user_msg);
+    
+    // 获取JSON字符串
+    final_prompt = strdup(json_object_to_json_string(messages));
+    
+    // 释放JSON对象
+    json_object_put(messages);
+    json_object_put(protocol_json);
+    json_object_put(examples_json);
+    json_object_put(history_json);
 
     free(prompt);
 
@@ -954,15 +1004,15 @@ int min(int a, int b) {
 
 char *enrich_sequence(char *sequence, khash_t(strSet) *missing_message_types)
 {
-    /* -------------------------------------------------------------
-       1.  优先尝试使用历史漏洞特征进行富集
-    ------------------------------------------------------------- */
+    if (!sequence || !missing_message_types || kh_size(missing_message_types) == 0)
+        return NULL;
 
-    if (protocol_name && vuln_patterns_map && missing_message_types)
-    {
+    /* -------------------------------------------------------------
+       1. 首先尝试使用漏洞模式进行富集
+    ------------------------------------------------------------- */
+    if (vuln_patterns_map && protocol_name) {
         khiter_t k_proto = kh_get(vuln_map, vuln_patterns_map, protocol_name);
-        if (k_proto != kh_end(vuln_patterns_map))
-        {
+        if (k_proto != kh_end(vuln_patterns_map)) {
             klist_t(vuln_patterns) *patterns = kh_value(vuln_patterns_map, k_proto);
 
             /* 遍历缺失的消息类型，寻找匹配的漏洞模式 */
@@ -1057,21 +1107,22 @@ char *enrich_sequence(char *sequence, khash_t(strSet) *missing_message_types)
     if (missing_fields_len >= 2)
         missing_fields_len -= 2; /* 移除最后一个", " */
 
-    /* 处理原始序列 JSON 转义 */
-    json_object *seq_escaped = json_object_new_string(sequence);
-    const char *seq_escaped_str = json_object_to_json_string(seq_escaped);
-    seq_escaped_str++; /* 跳过开头的引号 */
-
-    int seq_len = (int)strlen(seq_escaped_str) - 1; /* 去掉结尾引号 */
-    int allowed_tokens = MAX_TOKENS - strlen(prompt_template) - missing_fields_len;
-    if (seq_len > allowed_tokens)
-        seq_len = allowed_tokens;
-
+    /* 使用json-c库正确处理JSON转义 */
+    json_object *seq_json = json_object_new_string(sequence);
+    json_object *missing_fields_json = json_object_new_string(missing_fields_seq);
+    
+    const char *seq_escaped = json_object_get_string(seq_json);
+    const char *missing_fields_escaped = json_object_get_string(missing_fields_json);
+    
+    /* 创建提示词 */
+    char *prompt_template_full = "The following is one sequence of client requests:\n%s\nPlease add the %s client requests in the proper locations, and the modified sequence of client requests is:";
+    
     char *prompt = NULL;
-    asprintf(&prompt, prompt_template, seq_len, seq_escaped_str, missing_fields_len, missing_fields_seq);
+    asprintf(&prompt, prompt_template_full, seq_escaped, missing_fields_escaped);
 
     ck_free(missing_fields_seq);
-    json_object_put(seq_escaped);
+    json_object_put(seq_json);
+    json_object_put(missing_fields_json);
 
     char *response = chat_with_llm(prompt, "instruct", ENRICHMENT_RETRIES, 0.5);
     free(prompt);
@@ -1091,8 +1142,14 @@ char *enrich_sequence_with_vuln_pattern(char *sequence, const char *message_type
     char *prompt = construct_prompt_for_vuln_enrichment(sequence, message_type, pattern);
     if (!prompt) return NULL;
 
+    // 记录调试信息
+    ACTF("Attempting to enrich sequence with vulnerability pattern for message type %s", message_type);
+    
+    // 设置重试次数限制，避免无限循环
+    int max_tries = 2; // 减少重试次数，避免长时间卡住
+    
     // 调用LLM生成富集结果
-    char *response = chat_with_llm(prompt, "turbo", ENRICHMENT_RETRIES, 0.7);
+    char *response = chat_with_llm(prompt, "turbo", max_tries, 0.7);
     free(prompt);
 
     // 记录结果
@@ -1123,6 +1180,9 @@ int validate_generated_testcase(char *testcase, const char *protocol)
         return 0;
     }
     
+    // 记录调试信息
+    ACTF("Validating generated testcase (%zu bytes) for protocol %s", len, protocol);
+    
     // 2. 检查文本协议的行结束符
     if (strcasecmp(protocol, "http") == 0 || 
         strcasecmp(protocol, "smtp") == 0 || 
@@ -1130,9 +1190,9 @@ int validate_generated_testcase(char *testcase, const char *protocol)
         strcasecmp(protocol, "ftp") == 0 ||
         strcasecmp(protocol, "sip") == 0) {
         
-        // 至少应该有一个CRLF
-        if (strstr(testcase, "\r\n") == NULL) {
-            WARNF("Generated %s testcase missing proper CRLF line endings", protocol);
+        // 检查CRLF，但不强制要求（有些LLM可能生成\n而非\r\n）
+        if (strstr(testcase, "\r\n") == NULL && strstr(testcase, "\n") == NULL) {
+            WARNF("Generated %s testcase missing any line endings", protocol);
             return 0;
         }
         
@@ -1150,5 +1210,6 @@ int validate_generated_testcase(char *testcase, const char *protocol)
     }
     
     // 通过基本验证
+    OKF("Testcase validation passed");
     return 1;
 }

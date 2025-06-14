@@ -12,7 +12,7 @@ We give at most 400 for the examples and 1300 for the stall prompt
 Similarly 1700 is for the example request in the seed enrichment
 */
 
-#define OPENAI_TOKEN "your-api-key"
+#define OPENAI_TOKEN "sk-1234567890abcdefghijklmnopqrstuvwxyz1234567890"
 
 #define MAX_PROMPT_LENGTH 2048
 #define EXAMPLES_PROMPT_LENGTH 400
@@ -22,16 +22,16 @@ Similarly 1700 is for the example request in the seed enrichment
 #define TEMPLATE_CONSISTENCY_COUNT 3
 
 // Maximum amount of retries for the state stall
-#define STALL_RETRIES 2
+#define STALL_RETRIES 1
 
 // Maximum amount of tries to get the grammars
-#define GRAMMAR_RETRIES 3
+#define GRAMMAR_RETRIES 2
 
 // Maximum amount
-#define MESSAGE_TYPE_RETRIES 3
+#define MESSAGE_TYPE_RETRIES 2
 
 //Maximum amount of tries for an enrichment
-#define ENRICHMENT_RETRIES 3
+#define ENRICHMENT_RETRIES 1
 
 // Maximum number of messages to be added
 #define MAX_ENRICHMENT_MESSAGE_TYPES 2

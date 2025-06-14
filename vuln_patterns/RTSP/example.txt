@@ -1,0 +1,5 @@
+DESCRIPTION: RTSP Header Injection Vulnerability
+TARGET_MESSAGES: DESCRIBE, SETUP
+PATTERN: 
+User-Agent: %s%n
+Content-Type: application/sdp 

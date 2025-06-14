@@ -2836,7 +2836,10 @@ void get_seeds_with_messsage_types(const char *in_dir, khash_t(strSet) * message
     khiter_t k_map = kh_get(vuln_map, vuln_patterns_map, protocol_name);
     if (k_map != kh_end(vuln_patterns_map)) {
         klist_t(vuln_patterns)* patterns = kh_value(vuln_patterns_map, k_map);
-        kliter_t(vuln_patterns)* it;
+        
+        // 如果漏洞模式列表为空，则跳过漏洞特征富集
+        if (patterns != NULL && patterns->size > 0) {
+            kliter_t(vuln_patterns)* it;
 
         for (it = kl_begin(patterns); it != kl_end(patterns); it = kl_next(it)) {
             vuln_pattern_t* p = kl_val(it);
@@ -2897,6 +2900,9 @@ void get_seeds_with_messsage_types(const char *in_dir, khash_t(strSet) * message
                 token = strtok(NULL, ",");
             }
             ck_free(targets_copy);
+            }
+        } else {
+            WARNF("Vulnerability patterns list is empty, skipping vulnerability-based enrichment");
         }
     }
 
@@ -10875,12 +10881,14 @@ int main(int argc, char **argv)
   setup_ipsm();
   setup_dirs_fds();          // 已创建输出目录
 
-  /* ---- 新增 ---- */
-  vuln_patterns_map = kh_init(vuln_map);
-  if (protocol_name) load_vulnerability_patterns(protocol_name);
-  /* -------------- */
-
   if (protocol_selected) {
+      /* 初始化漏洞模式映射 */
+      vuln_patterns_map = kh_init(vuln_map);
+      if (!vuln_patterns_map) {
+          WARNF("Failed to initialize vulnerability patterns map");
+      } else if (protocol_name) {
+          load_vulnerability_patterns(protocol_name);
+      }
       protocol_patterns = kl_init(rang);
       message_types_set = kh_init(strSet);
       setup_llm_grammars();

@@ -9681,15 +9681,7 @@ EXP_ST void setup_dirs_fds(void)
      deterministic fuzzing in the past. */
 
   tmp = alloc_printf("%s/queue/.state/deterministic_done/", out_dir);
-  if (mkdir(tmp, 0700))
-    PFATAL("Unable to create '%s'", tmp);
-  ck_free(tmp);
-
-  /* Directory for flagging queue entries that went through
-     deterministic fuzzing in the past. */
-
-  tmp = alloc_printf("%s/queue/.state/deterministic_done/", out_dir);
-  if (mkdir(tmp, 0700))
+  if (mkdir(tmp, 0700) && errno != EEXIST)
     PFATAL("Unable to create '%s'", tmp);
   ck_free(tmp);
 
@@ -9755,13 +9747,9 @@ EXP_ST void setup_dirs_fds(void)
     PFATAL("Unable to create '%s'", tmp);
   ck_free(tmp);
   
-  /* 子目录用于存放LLM生成的语法 */
-  for (int i = 0; i < 10; i++) {
-    tmp = alloc_printf("%s/protocol-grammars/llm-grammar-output-%d", out_dir, i);
-    if (mkdir(tmp, 0700) && errno != EEXIST)
-      WARNF("Could not create LLM grammar output directory: %s", tmp);
-    ck_free(tmp);
-  }
+  /* 注意：实际生成的语法文件以
+       <out_dir>/protocol-grammars/llm-grammar-output-<n>
+       作为完整文件路径保存，不需要预建对应目录。 */
   
   /* 确保漏洞模式目录存在 */
   if (protocol_name) {
@@ -9781,7 +9769,7 @@ EXP_ST void setup_dirs_fds(void)
   /* 用于保存漏洞驱动的种子 */
   tmp = alloc_printf("%s/vulnerability-seeds", out_dir);
   if (mkdir(tmp, 0700) && errno != EEXIST)
-    PFATAL("Unable to create '%s'", tmp);
+    WARNF("Could not create vulnerability seeds directory: %s", tmp);
   ck_free(tmp);
 
   /* All output from the LLM's help for unblocking the state stall -- for debugging purposes.  */

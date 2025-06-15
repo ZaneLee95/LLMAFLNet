@@ -170,6 +170,17 @@ char* construct_prompt_for_vuln_enrichment(const char* sequence, const char* mes
         "=== PATTERN TO INJECT ===\n%s\n"
         "=== END ===";
     
+    // 使用json-c库正确处理JSON转义
+    json_object *seq_json = json_object_new_string(sequence);
+    json_object *msg_type_json = json_object_new_string(message_type_to_add);
+    json_object *desc_json = json_object_new_string(pattern->description ? pattern->description : "");
+    json_object *pattern_json = json_object_new_string(pattern->pattern ? pattern->pattern : "");
+    
+    const char *seq_escaped = json_object_get_string(seq_json);
+    const char *msg_type_escaped = json_object_get_string(msg_type_json);
+    const char *desc_escaped = json_object_get_string(desc_json);
+    const char *pattern_escaped = json_object_get_string(pattern_json);
+    
     // 计算所需空间并分配
     int estimated_size = strlen(prompt_template) + 
                         strlen(seq_escaped) + 
@@ -178,7 +189,13 @@ char* construct_prompt_for_vuln_enrichment(const char* sequence, const char* mes
                         strlen(msg_type_escaped) + 100; // 额外空间用于安全性
                         
     char* prompt = (char*)malloc(estimated_size);
-    if (!prompt) return NULL;
+    if (!prompt) {
+        json_object_put(seq_json);
+        json_object_put(msg_type_json);
+        json_object_put(desc_json);
+        json_object_put(pattern_json);
+        return NULL;
+    }
     
     snprintf(prompt, estimated_size, prompt_template,
             msg_type_escaped,

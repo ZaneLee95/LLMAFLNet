@@ -152,9 +152,15 @@ void make_combination(khash_t(strSet)* sequence, char** data, message_set_list* 
 #define MAX_PATTERN_SIZE (64 * 1024)  // 64KB 应该足够大
 
 /* Additional helper constants required by recent implementation */
+#ifndef MAX_LINE
 #define MAX_LINE 1024           /* Max length when reading a single line from template / pattern files */
+#endif
+#ifndef MAX_TOKENS
 #define MAX_TOKENS 2048         /* Hard limit of tokens in a single LLM prompt (GPT-3.5/4 context) */
+#endif
+#ifndef CONFIDENT_TIMES
 #define CONFIDENT_TIMES 3       /* Times we query the LLM for self-consistency */
+#endif
 
 // Directory operations
 void create_directory_recursive(const char *path);

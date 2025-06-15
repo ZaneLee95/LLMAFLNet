@@ -156,4 +156,7 @@ void make_combination(khash_t(strSet)* sequence, char** data, message_set_list* 
 #define MAX_TOKENS 2048         /* Hard limit of tokens in a single LLM prompt (GPT-3.5/4 context) */
 #define CONFIDENT_TIMES 3       /* Times we query the LLM for self-consistency */
 
+// Directory operations
+void create_directory_recursive(const char *path);
+
 #endif // __CHAT_LLM_H

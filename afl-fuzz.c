@@ -2869,7 +2869,12 @@ void get_seeds_with_messsage_types(const char *in_dir, khash_t(strSet) * message
                             {
                                 // format_request_message 不再释放输入指针
                                 char *formatted_requests = format_request_message(unescaped_client_requests);
-                                free(unescaped_client_requests);
+                                
+                                // 确保在释放内存之前检查指针是否有效
+                                if (unescaped_client_requests) {
+                                    free(unescaped_client_requests);
+                                    unescaped_client_requests = NULL;
+                                }
                                 
                                 char *enriched_file_name;
                                 asprintf(&enriched_file_name, "enriched_vuln_%s_%s", token, nl_file_name);
@@ -2879,19 +2884,36 @@ void get_seeds_with_messsage_types(const char *in_dir, khash_t(strSet) * message
                                 
                                 free(enriched_file_name);
                                 ck_free(enriched_file_path);
-                                free(formatted_requests);
+                                
+                                // 仅在指针有效时释放
+                                if (formatted_requests) {
+                                    free(formatted_requests);
+                                    formatted_requests = NULL;
+                                }
                             }
                             else
                             {
                                 WARNF("Vulnerability-enriched testcase failed validation, skipping");
-                                free(unescaped_client_requests);
+                                
+                                // 确保在释放内存之前检查指针是否有效
+                                if (unescaped_client_requests) {
+                                    free(unescaped_client_requests);
+                                    unescaped_client_requests = NULL;
+                                }
                             }
                         }
                         else
                         {
-                            free(unescaped_client_requests);
+                            // 确保在释放内存之前检查指针是否有效
+                            if (unescaped_client_requests) {
+                                free(unescaped_client_requests);
+                                unescaped_client_requests = NULL;
+                            }
                         }
+                        
+                        // 释放响应
                         free(client_request_answer);
+                        client_request_answer = NULL;
                     }
                     
                     // Remove this message type from the missing set so we don't enrich it again
@@ -2918,36 +2940,69 @@ void get_seeds_with_messsage_types(const char *in_dir, khash_t(strSet) * message
             char *client_request_answer = enrich_sequence(nl_file_content, subset);
             
             if (client_request_answer) {
-                    // 处理响应，例如格式化和写入新种子
-                    char *formatted_answer = format_request_message(client_request_answer);
-                    // 释放原始消息，因为format_request_message不再释放它
+                // 处理响应，例如格式化和写入新种子
+                char *formatted_answer = format_request_message(client_request_answer);
+                
+                // 释放原始消息，确保指针有效并在释放后置NULL
+                if (client_request_answer) {
                     free(client_request_answer);
-                    
-                    if (formatted_answer) {
-                        // 写入新种子
-                        char *enriched_file_name;
-                        asprintf(&enriched_file_name, "enriched_generic_%s_%d", nl_file_name, j);
-                        char *enriched_file_path = alloc_printf("%s/%s", in_dir, enriched_file_name);
-                        
-                        write_new_seeds(enriched_file_path, formatted_answer);
-                        
-                        free(enriched_file_name);
-                        ck_free(enriched_file_path);
-                        
-                        // formatted_answer是由ck_alloc分配的，使用ck_free释放
-                        ck_free(formatted_answer);
-                    }
-                } else {
-                    WARNF("Enriched testcase failed validation, skipping");
-                    free(client_request_answer);
+                    client_request_answer = NULL;
                 }
+                
+                if (formatted_answer) {
+                    // 写入新种子
+                    char *enriched_file_name;
+                    asprintf(&enriched_file_name, "enriched_generic_%s_%d", nl_file_name, j);
+                    char *enriched_file_path = alloc_printf("%s/%s", in_dir, enriched_file_name);
+                    
+                    // 确保目录存在
+                    write_new_seeds(enriched_file_path, formatted_answer);
+                    
+                    // 释放资源
+                    if (enriched_file_name) {
+                        free(enriched_file_name);
+                        enriched_file_name = NULL;
+                    }
+                    
+                    if (enriched_file_path) {
+                        ck_free(enriched_file_path);
+                        enriched_file_path = NULL;
+                    }
+                    
+                    // formatted_answer是由ck_alloc分配的，使用ck_free释放
+                    if (formatted_answer) {
+                        ck_free(formatted_answer);
+                        formatted_answer = NULL;
+                    }
+                }
+            } else {
+                // 当client_request_answer为NULL时，不需要释放
+                WARNF("Generic enrichment failed or returned empty result, skipping");
             }
+        }
         
-        // ... (cleanup for message_subsets) ...
+        // 清理消息子集
+        for (int j = 0; j < kv_size(message_subsets); j++) {
+            khash_t(strSet)* subset = kv_A(message_subsets, j);
+            if (subset) {
+                kh_destroy(strSet, subset);
+            }
+        }
+        kv_destroy(message_subsets);
     }
 
-    kh_destroy(strSet, messages);
-  }
+        // 确保在函数结束时释放messages
+    if (messages) {
+        kh_destroy(strSet, messages);
+        messages = NULL;
+    }
+    
+    // 释放文件内容
+    if (nl_file_content) {
+        free(nl_file_content);
+        nl_file_content = NULL;
+    }
+}
 }
 
 /* Enrich the testcases before startup */
@@ -5948,7 +6003,7 @@ static void show_stats(void)
 
   sprintf(tmp, "%0.02f%% / %0.02f%%", ((double)queue_cur->bitmap_size) * 100 / MAP_SIZE, t_byte_ratio);
 
-  SAYF(bSTOP "    map density : %s%-21s " bSTG bV "\n", t_byte_ratio > 70 ? cLRD : ((t_bytes < 200 && !dumb_mode) ? cPIN : cRST), tmp);
+  SAYF("    map density : %s%-21s " bSTG bV "\n", t_byte_ratio > 70 ? cLRD : ((t_bytes < 200 && !dumb_mode) ? cPIN : cRST), tmp);
 
   sprintf(tmp, "%s (%0.02f%%)", DI(cur_skipped_paths),
           ((double)cur_skipped_paths * 100) / queued_paths);
@@ -5989,7 +6044,7 @@ static void show_stats(void)
   sprintf(tmp, "%s (%0.02f%%)", DI(queued_with_cov),
           ((double)queued_with_cov) * 100 / queued_paths);
 
-  SAYF(bSTOP "  new edges on : " cRST "%-22s " bSTG bV "\n", tmp);
+  SAYF("  new edges on : " cRST "%-22s " bSTG bV "\n", tmp);
 
   sprintf(tmp, "%s (%s%s unique)", DI(total_crashes), DI(unique_crashes),
           (unique_crashes >= KEEP_UNIQUE_CRASH) ? "+" : "");
@@ -9255,6 +9310,10 @@ static void sync_fuzzers(char **argv)
         queued_imported += save_if_interesting(argv, mem, st.st_size, fault);
         syncing_party = 0;
 
+        /* AFLNet delete the kl_messages */
+        ck_free(regions);
+        delete_kl_messages(kl_messages);
+        
         /* AFLNet: unset this flag to disable request extractions while adding new seed to the queue */
         corpus_read_or_sync = 0;
 

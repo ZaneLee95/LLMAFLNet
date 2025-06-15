@@ -5,6 +5,8 @@
 #include <ctype.h>
 #include <dirent.h>
 #include <unistd.h>
+#include <sys/stat.h>
+#include <errno.h>
 
 #include "chat-llm.h"
 #include "alloc-inl.h"
@@ -64,59 +66,14 @@ char *chat_with_llm(char *prompt, char *model, int tries, float temperature)
     char *content_header = "Content-Type: application/json";
     char *accept_header = "Accept: application/json";
     char *data = NULL;
-    
-    // 使用json-c库正确构建JSON请求
-    json_object *json_req = json_object_new_object();
-    
-    // 添加公共字段
-    json_object_object_add(json_req, "max_tokens", json_object_new_int(MAX_TOKENS));
-    json_object_object_add(json_req, "temperature", json_object_new_double(temperature));
-    
-    if (strcmp(model, "instruct") == 0) {
-        // 指令模式
-        json_object_object_add(json_req, "model", json_object_new_string("gpt-3.5-turbo-instruct"));
-        json_object_object_add(json_req, "prompt", json_object_new_string(prompt));
-    } else {
-        // 聊天模式
-        json_object_object_add(json_req, "model", json_object_new_string("gpt-3.5-turbo"));
-        
-        // 对于聊天模式，prompt应该已经是JSON格式的消息数组
-        // 但为了安全，我们检查它是否已经是有效的JSON
-        json_object *messages = NULL;
-        if (prompt[0] == '[') {
-            // 看起来像是JSON数组，尝试解析
-            messages = json_tokener_parse(prompt);
-        }
-        
-        if (messages && json_object_get_type(messages) == json_type_array) {
-            // 成功解析为数组，直接添加
-            json_object_object_add(json_req, "messages", messages);
-        } else {
-            // 如果不是有效的JSON数组，创建一个简单的消息
-            if (messages) json_object_put(messages); // 释放之前尝试解析的结果
-            
-            json_object *msg_array = json_object_new_array();
-            json_object *user_msg = json_object_new_object();
-            
-            json_object_object_add(user_msg, "role", json_object_new_string("user"));
-            json_object_object_add(user_msg, "content", json_object_new_string(prompt));
-            
-            json_object_array_add(msg_array, user_msg);
-            json_object_object_add(json_req, "messages", msg_array);
-        }
+    if (strcmp(model, "instruct") == 0)
+    {
+        asprintf(&data, "{\"model\": \"gpt-3.5-turbo-instruct\", \"prompt\": \"%s\", \"max_tokens\": %d, \"temperature\": %f}", prompt, MAX_TOKENS, temperature);
     }
-    
-    // 获取最终的JSON字符串
-    data = strdup(json_object_to_json_string(json_req));
-    
-    // 释放JSON对象
-    json_object_put(json_req);
-    
-    if (!data) {
-        WARNF("Failed to create JSON request data");
-        return NULL;
+    else
+    {
+        asprintf(&data, "{\"model\": \"gpt-3.5-turbo\",\"messages\": %s, \"max_tokens\": %d, \"temperature\": %f}", prompt, MAX_TOKENS, temperature);
     }
-    
     curl_global_init(CURL_GLOBAL_DEFAULT);
     do
     {
@@ -196,19 +153,9 @@ char *chat_with_llm(char *prompt, char *model, int tries, float temperature)
     return answer;
 }
 
+
 char* construct_prompt_for_vuln_enrichment(const char* sequence, const char* message_type_to_add, vuln_pattern_t* pattern) {
     if (!sequence || !message_type_to_add || !pattern) return NULL;
-    
-    // 使用JSON对象处理特殊字符转义
-    json_object *seq_json = json_object_new_string(sequence);
-    json_object *desc_json = json_object_new_string(pattern->description ? pattern->description : "Unknown vulnerability");
-    json_object *pattern_json = json_object_new_string(pattern->pattern ? pattern->pattern : "");
-    json_object *msg_type_json = json_object_new_string(message_type_to_add);
-    
-    const char *seq_escaped = json_object_get_string(seq_json);
-    const char *desc_escaped = json_object_get_string(desc_json);
-    const char *pattern_escaped = json_object_get_string(pattern_json);
-    const char *msg_type_escaped = json_object_get_string(msg_type_json);
     
     const char* prompt_template =
         "ROLE: You are a cyber-security assistant specialised in generating network protocol test cases.\n"
@@ -250,47 +197,16 @@ char* construct_prompt_for_vuln_enrichment(const char* sequence, const char* mes
 
 char *construct_prompt_stall(char *protocol_name, char *examples, char *history)
 {
-    // 使用JSON对象处理特殊字符转义
-    json_object *protocol_json = json_object_new_string(protocol_name);
-    json_object *examples_json = json_object_new_string(examples);
-    json_object *history_json = json_object_new_string(history);
-    
-    const char *protocol_escaped = json_object_get_string(protocol_json);
-    const char *examples_escaped = json_object_get_string(examples_json);
-    const char *history_escaped = json_object_get_string(history_json);
-    
-    const char *template = "In the %s protocol, the communication history between the %s client and the %s server is as follows."
+    char *template = "In the %s protocol, the communication history between the %s client and the %s server is as follows."
                      "The next proper client request that can affect the server's state are:\\n\\n"
                      "Desired format of real client requests:\\n%sCommunication History:\\n\\\"\\\"\\\"\\n%s\\\"\\\"\\\"";
 
     char *prompt = NULL;
-    asprintf(&prompt, template, protocol_escaped, protocol_escaped, protocol_escaped, examples_escaped, history_escaped);
+    asprintf(&prompt, template, protocol_name, protocol_name, protocol_name, examples, history);
 
     char *final_prompt = NULL;
-    
-    // 创建JSON对象来构造最终的消息数组
-    json_object *messages = json_object_new_array();
-    
-    // 系统角色消息
-    json_object *system_msg = json_object_new_object();
-    json_object_object_add(system_msg, "role", json_object_new_string("system"));
-    json_object_object_add(system_msg, "content", json_object_new_string("You are a helpful assistant."));
-    json_object_array_add(messages, system_msg);
-    
-    // 用户消息
-    json_object *user_msg = json_object_new_object();
-    json_object_object_add(user_msg, "role", json_object_new_string("user"));
-    json_object_object_add(user_msg, "content", json_object_new_string(prompt));
-    json_object_array_add(messages, user_msg);
-    
-    // 获取JSON字符串
-    final_prompt = strdup(json_object_to_json_string(messages));
-    
-    // 释放JSON对象
-    json_object_put(messages);
-    json_object_put(protocol_json);
-    json_object_put(examples_json);
-    json_object_put(history_json);
+
+    asprintf(&final_prompt, "[{\"role\": \"system\", \"content\": \"You are a helpful assistant.\"}, {\"role\": \"user\", \"content\": \"%s\"}]", prompt);
 
     free(prompt);
 
@@ -853,8 +769,69 @@ char *unescape_string(const char *input)
     return output;
 }
 
+/*
+ * Helper function to create directories recursively
+ */
+void create_directory_recursive(const char *path) {
+    if (!path || strlen(path) == 0) return;
+    
+    char *path_copy = strdup(path);
+    if (!path_copy) return;
+    
+    // 统一使用系统适合的分隔符
+    #ifdef _WIN32
+    char separator = '\\';
+    #else
+    char separator = '/';
+    #endif
+    
+    // 替换所有分隔符为系统适合的分隔符
+    for (char *p = path_copy; *p; p++) {
+        if (*p == '/' || *p == '\\') *p = separator;
+    }
+    
+    // 创建目录层次
+    for (char *p = path_copy + 1; *p; p++) {
+        if (*p == separator) {
+            *p = '\0';
+            
+            #ifdef _WIN32
+            mkdir(path_copy);
+            #else
+            if (mkdir(path_copy, 0700) != 0 && errno != EEXIST) {
+                fprintf(stderr, "Failed to create directory %s: %s\n", path_copy, strerror(errno));
+            }
+            #endif
+            
+            *p = separator;
+        }
+    }
+    
+    // 创建最终目录
+    #ifdef _WIN32
+    mkdir(path_copy);
+    #else
+    if (mkdir(path_copy, 0700) != 0 && errno != EEXIST) {
+        fprintf(stderr, "Failed to create directory %s: %s\n", path_copy, strerror(errno));
+    }
+    #endif
+    
+    free(path_copy);
+}
+
 void write_new_seeds(char *enriched_file, char *contents)
 {
+    // Create parent directories if they don't exist
+    char *parent_dir = strdup(enriched_file);
+    if (parent_dir) {
+        char *last_slash = strrchr(parent_dir, '/');
+        if (last_slash) {
+            *last_slash = '\0';
+            create_directory_recursive(parent_dir);
+        }
+        free(parent_dir);
+    }
+    
     FILE *fp = fopen(enriched_file, "w");
     if (fp == NULL)
     {
@@ -1255,4 +1232,68 @@ int validate_generated_testcase(char *testcase, const char *protocol)
     // 通过基本验证
     OKF("Testcase validation passed");
     return 1;
+}
+
+/*
+ * Implementation of vulnerability template initialization and cleanup functions
+ */
+void init_vulnerability_templates(vulnerability_t *templates, int *template_count) {
+    if (!templates || !template_count) return;
+    
+    // Initialize all templates to NULL values
+    for (int i = 0; i < MAX_VUL_TEMPLATES; i++) {
+        templates[i].name = NULL;
+        templates[i].description = NULL;
+        templates[i].pattern = NULL;
+        templates[i].applicable_message_types = NULL;
+    }
+    
+    *template_count = 0;
+}
+
+void free_vulnerability_templates(vulnerability_t *templates, int template_count) {
+    if (!templates) return;
+    
+    for (int i = 0; i < template_count; i++) {
+        if (templates[i].name) {
+            free(templates[i].name);
+            templates[i].name = NULL;
+        }
+        if (templates[i].description) {
+            free(templates[i].description);
+            templates[i].description = NULL;
+        }
+        if (templates[i].pattern) {
+            free(templates[i].pattern);
+            templates[i].pattern = NULL;
+        }
+        if (templates[i].applicable_message_types) {
+            free(templates[i].applicable_message_types);
+            templates[i].applicable_message_types = NULL;
+        }
+    }
+}
+
+int main() {
+    vuln_patterns_map = kh_init(vuln_map);
+    if (!vuln_patterns_map) {
+        FATAL("Failed to initialize vulnerability patterns map");
+    }
+
+    // ... rest of the main function ...
+
+    if (vuln_patterns_map) {
+        // 遍历并释放所有漏洞模式
+        for (khiter_t k = kh_begin(vuln_patterns_map); k != kh_end(vuln_patterns_map); ++k) {
+            if (kh_exist(vuln_patterns_map, k)) {
+                klist_t(vuln_patterns) *patterns = kh_value(vuln_patterns_map, k);
+                if (patterns) {
+                    kl_destroy(vuln_patterns, patterns);
+                }
+            }
+        }
+        kh_destroy(vuln_map, vuln_patterns_map);
+    }
+
+    return 0;
 }

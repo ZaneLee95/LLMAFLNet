@@ -10942,10 +10942,8 @@ int main(int argc, char **argv)
 
   if (protocol_selected) {
       /* 初始化漏洞模式映射 */
-      vuln_patterns_map = kh_init(vuln_map);
-      if (!vuln_patterns_map) {
-          WARNF("Failed to initialize vulnerability patterns map");
-      } else if (protocol_name) {
+      init_vuln_patterns_map();
+      if (protocol_name) {
           load_vulnerability_patterns(protocol_name);
       }
       protocol_patterns = kl_init(rang);
@@ -11187,6 +11185,11 @@ stop_fuzzing:
   ck_free(sync_id);
 
   destroy_ipsm();
+  
+  // 清理漏洞模式映射
+  if (protocol_selected) {
+    cleanup_vuln_patterns_map();
+  }
 
   alloc_report();
 

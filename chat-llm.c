@@ -1291,14 +1291,19 @@ void free_vulnerability_templates(vulnerability_t *templates, int template_count
     }
 }
 
-int main() {
+/* 
+ * 以下是一些初始化和清理漏洞模式映射的辅助函数，
+ * 在afl-fuzz.c中的适当位置调用
+ */
+
+void init_vuln_patterns_map() {
     vuln_patterns_map = kh_init(vuln_map);
     if (!vuln_patterns_map) {
         FATAL("Failed to initialize vulnerability patterns map");
     }
+}
 
-    // ... rest of the main function ...
-
+void cleanup_vuln_patterns_map() {
     if (vuln_patterns_map) {
         // 遍历并释放所有漏洞模式
         for (khiter_t k = kh_begin(vuln_patterns_map); k != kh_end(vuln_patterns_map); ++k) {
@@ -1310,7 +1315,6 @@ int main() {
             }
         }
         kh_destroy(vuln_map, vuln_patterns_map);
+        vuln_patterns_map = NULL;
     }
-
-    return 0;
 }

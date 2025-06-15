@@ -145,6 +145,10 @@ void get_vulnerability_driven_seeds(const char *in_dir, const char *out_dir, vul
 void init_vulnerability_templates(vulnerability_t *templates, int *template_count);
 void free_vulnerability_templates(vulnerability_t *templates, int template_count);
 
+// 漏洞模式映射的初始化和清理函数
+void init_vuln_patterns_map(void);
+void cleanup_vuln_patterns_map(void);
+
 // 更新函数声明，使用 char** 而不是 const char**
 void make_combination(khash_t(strSet)* sequence, char** data, message_set_list* res, khiter_t st, khiter_t end, int index, int size);
 
